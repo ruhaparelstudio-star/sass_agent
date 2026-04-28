@@ -6,6 +6,7 @@ use App\Enums\WaAccountStatus;
 use App\Enums\WaSessionStatus;
 use App\Http\Controllers\Controller;
 use App\Models\Tenant;
+use App\Modules\WhatsApp\Services\WaOutboundService;
 use App\Modules\WhatsApp\Services\WaSyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -13,9 +14,10 @@ use Illuminate\Validation\Rules\Enum;
 
 class WaInternalController extends Controller
 {
-    public function __construct(private readonly WaSyncService $waSyncService)
-    {
-    }
+    public function __construct(
+        private readonly WaSyncService $waSyncService,
+        private readonly WaOutboundService $waOutboundService
+    ) {}
 
     public function upsertAccount(Request $request): JsonResponse
     {
@@ -79,5 +81,27 @@ class WaInternalController extends Controller
         $inboundMessage = $this->waSyncService->storeInboundMessage($tenant, $payload);
 
         return response()->json(['data' => $inboundMessage]);
+    }
+
+    public function queueOutboundMessage(Request $request): JsonResponse
+    {
+        $payload = $request->validate([
+            'tenant_id' => ['required', 'integer', 'exists:tenants,id'],
+            'provider' => ['required', 'string', 'max:100'],
+            'wa_account_provider_ref' => ['required', 'string', 'max:191'],
+            'wa_session_provider_ref' => ['nullable', 'string', 'max:191'],
+            'provider_message_id' => ['nullable', 'string', 'max:191'],
+            'to' => ['required', 'string', 'max:64'],
+            'message_type' => ['required', 'string', 'max:64'],
+            'payload' => ['required', 'array'],
+            'meta' => ['nullable', 'array'],
+        ]);
+
+        $tenant = Tenant::query()->findOrFail($payload['tenant_id']);
+        $this->waOutboundService->assertTenantScope($request->user(), $tenant);
+
+        $outbound = $this->waOutboundService->queueOutboundMessage($tenant, $payload);
+
+        return response()->json(['data' => $outbound]);
     }
 }

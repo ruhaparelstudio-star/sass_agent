@@ -56,3 +56,19 @@ If you discover a security vulnerability within Laravel, please send an e-mail t
 ## License
 
 The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+
+## Docker Notes
+
+When running `artisan tinker` inside Docker, PsySH may fail if its config directory is not writable.
+
+Use this command pattern:
+
+```bash
+docker compose exec -T app env XDG_CONFIG_HOME=/tmp php artisan tinker
+```
+
+For one-off execution:
+
+```bash
+docker compose exec -T app env XDG_CONFIG_HOME=/tmp php artisan tinker --execute="dump('OK');"
+```

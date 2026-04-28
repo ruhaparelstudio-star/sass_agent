@@ -36,5 +36,6 @@ Route::middleware(['auth:sanctum', 'api.token'])->group(function (): void {
         Route::post('/accounts/upsert', [WaInternalController::class, 'upsertAccount']);
         Route::post('/sessions/upsert', [WaInternalController::class, 'upsertSession']);
         Route::post('/inbound-messages', [WaInternalController::class, 'storeInboundMessage']);
+        Route::post('/outbound-messages', [WaInternalController::class, 'queueOutboundMessage']);
     });
 });
