@@ -8,12 +8,50 @@ class GroundingValidatorService implements GroundingValidator
 {
     public function validate(array $candidate, array $context): ?string
     {
-        $reasons = $candidate['reasons'] ?? [];
+        $action = (string) ($candidate['action'] ?? '');
+        $requiredClaims = $this->requiredClaimsByAction($action);
 
-        if (! is_array($reasons) || $reasons === []) {
+        if ($requiredClaims === []) {
             return null;
         }
 
-        return (string) $reasons[0];
+        $grounding = $context['grounding'] ?? [];
+
+        foreach ($requiredClaims as $claim) {
+            if (! $this->isClaimGrounded($claim, $grounding)) {
+                return 'grounding_'.$claim.'_missing_source';
+            }
+        }
+
+        return null;
+    }
+
+    private function requiredClaimsByAction(string $action): array
+    {
+        return match ($action) {
+            'send_pricelist' => ['price', 'package', 'file'],
+            'request_booking' => ['package', 'calendar'],
+            'send_invoice' => ['invoice', 'price', 'file'],
+            default => [],
+        };
+    }
+
+    private function isClaimGrounded(string $claim, array $grounding): bool
+    {
+        if (! array_key_exists($claim, $grounding)) {
+            return false;
+        }
+
+        $value = $grounding[$claim];
+
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        if (is_array($value)) {
+            return ($value['is_grounded'] ?? false) === true;
+        }
+
+        return false;
     }
 }
