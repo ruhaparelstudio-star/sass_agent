@@ -53,4 +53,9 @@ class Package extends Model
     {
         return $this->hasMany(Discount::class);
     }
+
+    public function aliases(): HasMany
+    {
+        return $this->hasMany(PackageAlias::class);
+    }
 }

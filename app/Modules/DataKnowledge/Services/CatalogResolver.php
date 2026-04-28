@@ -35,16 +35,22 @@ class CatalogResolver
                                     ->apply($query, $tenantId, $at)
                                     ->orderBy('sort_order')
                                     ->orderBy('id')
-                                    ->with([
-                                        'items' => function ($query) use ($tenantId, $at): void {
-                                            $this->windowScope
-                                                ->apply($query, $tenantId, $at)
-                                                ->orderBy('sort_order')
-                                                ->orderBy('id');
-                                        },
-                                    ]);
-                            },
-                        ]);
+                            ->with([
+                                'items' => function ($query) use ($tenantId, $at): void {
+                                    $this->windowScope
+                                        ->apply($query, $tenantId, $at)
+                                        ->orderBy('sort_order')
+                                        ->orderBy('id');
+                                },
+                                'aliases' => function ($query) use ($tenantId, $at): void {
+                                    $this->windowScope
+                                        ->apply($query, $tenantId, $at)
+                                        ->orderBy('sort_order')
+                                        ->orderBy('id');
+                                },
+                            ]);
+                    },
+                ]);
                 },
             ])
             ->orderBy('sort_order')
@@ -78,6 +84,13 @@ class CatalogResolver
                                         'name' => $item->name,
                                         'description' => $item->description,
                                         'sort_order' => $item->sort_order,
+                                    ];
+                                })->values()->all(),
+                                'aliases' => $package->aliases->map(static function ($alias): array {
+                                    return [
+                                        'id' => $alias->id,
+                                        'alias' => $alias->alias,
+                                        'sort_order' => $alias->sort_order,
                                     ];
                                 })->values()->all(),
                             ];

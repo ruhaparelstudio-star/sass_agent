@@ -101,6 +101,7 @@ class DeterministicIntentClassifier implements IntentClassifierContract
         }
 
         $catalogs = $this->catalogResolver->resolveCatalog($tenantId, now());
+        $aliasMatches = [];
 
         foreach ($catalogs as $catalog) {
             foreach ($catalog['products'] as $product) {
@@ -111,8 +112,29 @@ class DeterministicIntentClassifier implements IntentClassifierContract
                     if ($packageQuery === $code || $packageQuery === $name) {
                         return [$package['code'], $package['name']];
                     }
+
+                    foreach (($package['aliases'] ?? []) as $aliasRow) {
+                        $alias = mb_strtolower((string) ($aliasRow['alias'] ?? ''));
+                        if ($packageQuery !== $alias) {
+                            continue;
+                        }
+
+                        $packageCode = (string) ($package['code'] ?? '');
+                        if ($packageCode === '') {
+                            continue;
+                        }
+
+                        $aliasMatches[$packageCode] = [
+                            $package['code'] ?? null,
+                            $package['name'] ?? null,
+                        ];
+                    }
                 }
             }
+        }
+
+        if (count($aliasMatches) === 1) {
+            return array_values($aliasMatches)[0];
         }
 
         return [null, null];

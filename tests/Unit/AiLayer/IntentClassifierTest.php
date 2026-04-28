@@ -4,6 +4,7 @@ namespace Tests\Unit\AiLayer;
 
 use App\Models\KnowledgeVersion;
 use App\Models\Package;
+use App\Models\PackageAlias;
 use App\Models\Product;
 use App\Models\ServiceCatalog;
 use App\Models\Tenant;
@@ -107,6 +108,47 @@ class IntentClassifierTest extends TestCase
         $this->assertNull($result->entities['budget_amount']);
         $this->assertFalse($result->entities['is_correction']);
         $this->assertSame([], $result->entities['corrected_fields']);
+    }
+
+    public function test_package_alias_is_resolved_from_same_tenant_only(): void
+    {
+        $tenantA = $this->createTenantWithPackage('tenant-a', 'gold', 'Gold Package A');
+        $tenantB = $this->createTenantWithPackage('tenant-b', 'silver', 'Silver Package B');
+        $goldPackageA = Package::query()->where('tenant_id', $tenantA->id)->where('code', 'gold')->firstOrFail();
+        $silverPackageB = Package::query()->where('tenant_id', $tenantB->id)->where('code', 'silver')->firstOrFail();
+
+        PackageAlias::query()->create([
+            'tenant_id' => $tenantA->id,
+            'package_id' => $goldPackageA->id,
+            'alias' => 'hemat',
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+
+        PackageAlias::query()->create([
+            'tenant_id' => $tenantB->id,
+            'package_id' => $silverPackageB->id,
+            'alias' => 'hemat',
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+
+        $classifier = app(DeterministicIntentClassifier::class);
+
+        $result = $classifier->classify(
+            $tenantA->id,
+            'saya mau paket hemat',
+            '{"intent":"ask_package","confidence":0.9,"entities":{"package_query":"hemat"}}'
+        );
+
+        $this->assertSame(Intent::AskPackage, $result->intent);
+        $this->assertSame('hemat', $result->entities['package_query']);
+        $this->assertSame('gold', $result->entities['resolved_package_code']);
+        $this->assertSame('Gold Package A', $result->entities['resolved_package_name']);
     }
 
     public function test_invalid_or_ambiguous_date_and_budget_return_null(): void

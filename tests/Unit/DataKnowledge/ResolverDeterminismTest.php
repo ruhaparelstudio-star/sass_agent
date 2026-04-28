@@ -5,6 +5,7 @@ namespace Tests\Unit\DataKnowledge;
 use App\Models\Discount;
 use App\Models\KnowledgeVersion;
 use App\Models\Package;
+use App\Models\PackageAlias;
 use App\Models\Price;
 use App\Models\Product;
 use App\Models\ServiceCatalog;
@@ -182,5 +183,128 @@ class ResolverDeterminismTest extends TestCase
         $this->assertSame('Active Price', $pricing['prices'][0]['label']);
         $this->assertCount(1, $pricing['discounts']);
         $this->assertSame('Active Discount', $pricing['discounts'][0]['name']);
+    }
+
+    public function test_catalog_aliases_are_tenant_and_window_filtered(): void
+    {
+        $tenantA = Tenant::query()->create([
+            'name' => 'Tenant A',
+            'slug' => 'tenant-a',
+            'is_active' => true,
+        ]);
+        $tenantB = Tenant::query()->create([
+            'name' => 'Tenant B',
+            'slug' => 'tenant-b',
+            'is_active' => true,
+        ]);
+
+        KnowledgeVersion::query()->create([
+            'tenant_id' => $tenantA->id,
+            'name' => 'v1-a',
+            'is_active' => true,
+            'effective_from' => now()->subDay(),
+            'effective_until' => now()->addDay(),
+        ]);
+        KnowledgeVersion::query()->create([
+            'tenant_id' => $tenantB->id,
+            'name' => 'v1-b',
+            'is_active' => true,
+            'effective_from' => now()->subDay(),
+            'effective_until' => now()->addDay(),
+        ]);
+
+        $catalogA = ServiceCatalog::query()->create([
+            'tenant_id' => $tenantA->id,
+            'code' => 'wedding',
+            'name' => 'Wedding',
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+        $productA = Product::query()->create([
+            'tenant_id' => $tenantA->id,
+            'service_catalog_id' => $catalogA->id,
+            'code' => 'photo',
+            'name' => 'Photo',
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+        $packageA = Package::query()->create([
+            'tenant_id' => $tenantA->id,
+            'product_id' => $productA->id,
+            'code' => 'gold',
+            'name' => 'Gold',
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+
+        PackageAlias::query()->create([
+            'tenant_id' => $tenantA->id,
+            'package_id' => $packageA->id,
+            'alias' => 'hemat',
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+        PackageAlias::query()->create([
+            'tenant_id' => $tenantA->id,
+            'package_id' => $packageA->id,
+            'alias' => 'legacy',
+            'sort_order' => 2,
+            'is_active' => true,
+            'active_from' => now()->subDays(5),
+            'active_until' => now()->subDay(),
+        ]);
+
+        $catalogB = ServiceCatalog::query()->create([
+            'tenant_id' => $tenantB->id,
+            'code' => 'wedding',
+            'name' => 'Wedding',
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+        $productB = Product::query()->create([
+            'tenant_id' => $tenantB->id,
+            'service_catalog_id' => $catalogB->id,
+            'code' => 'video',
+            'name' => 'Video',
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+        $packageB = Package::query()->create([
+            'tenant_id' => $tenantB->id,
+            'product_id' => $productB->id,
+            'code' => 'silver',
+            'name' => 'Silver',
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+        PackageAlias::query()->create([
+            'tenant_id' => $tenantB->id,
+            'package_id' => $packageB->id,
+            'alias' => 'hemat-b',
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+
+        $rows = app(CatalogResolver::class)->resolveCatalog($tenantA->id, now());
+
+        $aliases = $rows[0]['products'][0]['packages'][0]['aliases'];
+        $this->assertCount(1, $aliases);
+        $this->assertSame('hemat', $aliases[0]['alias']);
     }
 }
