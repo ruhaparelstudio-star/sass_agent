@@ -23,6 +23,10 @@ class InterpretationResult
                 'package_query' => null,
                 'resolved_package_code' => null,
                 'resolved_package_name' => null,
+                'event_date_iso' => null,
+                'budget_amount' => null,
+                'is_correction' => false,
+                'corrected_fields' => [],
             ],
             $raw,
             $reason

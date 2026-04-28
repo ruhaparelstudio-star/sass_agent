@@ -35,6 +35,12 @@ class DeterministicIntentClassifier implements IntentClassifierContract
         }
 
         $packageQuery = $this->normalizeText($decoded['entities']['package_query'] ?? null);
+        $eventDateIso = $this->parseEventDateIso($decoded['entities']['event_date'] ?? null);
+        $budgetAmount = $this->parseBudgetAmount($decoded['entities']['budget'] ?? null);
+        [$isCorrection, $correctedFields] = $this->detectCorrection(
+            $userMessage,
+            $decoded['entities']
+        );
 
         [$resolvedCode, $resolvedName] = $this->resolvePackageAlias($tenantId, $packageQuery);
 
@@ -45,6 +51,10 @@ class DeterministicIntentClassifier implements IntentClassifierContract
                 'package_query' => $packageQuery,
                 'resolved_package_code' => $resolvedCode,
                 'resolved_package_name' => $resolvedName,
+                'event_date_iso' => $eventDateIso,
+                'budget_amount' => $budgetAmount,
+                'is_correction' => $isCorrection,
+                'corrected_fields' => $correctedFields,
             ],
             [
                 'user_message' => $userMessage,
@@ -106,5 +116,128 @@ class DeterministicIntentClassifier implements IntentClassifierContract
         }
 
         return [null, null];
+    }
+
+    private function parseEventDateIso(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $normalized = trim($value);
+        if ($normalized === '') {
+            return null;
+        }
+
+        if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $normalized, $matches) === 1) {
+            return checkdate((int) $matches[2], (int) $matches[3], (int) $matches[1])
+                ? $normalized
+                : null;
+        }
+
+        if (preg_match('/^(\d{2})[\/\-](\d{2})[\/\-](\d{4})$/', $normalized, $matches) === 1) {
+            $day = (int) $matches[1];
+            $month = (int) $matches[2];
+            $year = (int) $matches[3];
+
+            if (! checkdate($month, $day, $year)) {
+                return null;
+            }
+
+            return sprintf('%04d-%02d-%02d', $year, $month, $day);
+        }
+
+        return null;
+    }
+
+    private function parseBudgetAmount(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return $value > 0 ? $value : null;
+        }
+
+        if (is_float($value)) {
+            return $value > 0 ? (int) round($value) : null;
+        }
+
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $normalized = mb_strtolower(trim($value));
+        if ($normalized === '') {
+            return null;
+        }
+
+        if (preg_match('/\d/', $normalized) !== 1) {
+            return null;
+        }
+
+        if (preg_match('/(\d+(?:[.,]\d+)?)\s*(juta|jt)\b/u', $normalized, $matches) === 1) {
+            $base = (float) str_replace(',', '.', $matches[1]);
+            $amount = (int) round($base * 1000000);
+
+            return $amount > 0 ? $amount : null;
+        }
+
+        $digits = preg_replace('/\D+/u', '', $normalized);
+        if (! is_string($digits) || $digits === '') {
+            return null;
+        }
+
+        $amount = (int) $digits;
+
+        return $amount > 0 ? $amount : null;
+    }
+
+    private function detectCorrection(string $userMessage, array $entities): array
+    {
+        $explicitCorrection = ($entities['correction'] ?? null) === true;
+        $messageHasMarker = preg_match('/\b(koreksi|ralat|revisi|bukan|salah|ubah|ganti)\b/u', mb_strtolower($userMessage)) === 1;
+        $isCorrection = $explicitCorrection || $messageHasMarker;
+
+        $correctedFields = $this->normalizeCorrectedFields($entities['corrected_fields'] ?? null);
+
+        if (! $isCorrection) {
+            return [false, []];
+        }
+
+        return [true, $correctedFields];
+    }
+
+    private function normalizeCorrectedFields(mixed $value): array
+    {
+        if (! is_array($value)) {
+            return [];
+        }
+
+        $allowed = [
+            'package_query' => 'package_query',
+            'package' => 'package_query',
+            'event_date' => 'event_date',
+            'event_date_iso' => 'event_date',
+            'budget' => 'budget',
+            'budget_amount' => 'budget',
+        ];
+
+        $normalized = [];
+
+        foreach ($value as $field) {
+            if (! is_string($field)) {
+                continue;
+            }
+
+            $key = mb_strtolower(trim($field));
+            if ($key === '' || ! array_key_exists($key, $allowed)) {
+                continue;
+            }
+
+            $mapped = $allowed[$key];
+            if (! in_array($mapped, $normalized, true)) {
+                $normalized[] = $mapped;
+            }
+        }
+
+        return $normalized;
     }
 }

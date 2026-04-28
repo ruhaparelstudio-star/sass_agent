@@ -24,8 +24,8 @@ class IntentClassifierTest extends TestCase
 
         $result = $classifier->classify(
             $tenant->id,
-            'saya mau tanya harga paket gold',
-            '{"intent":"ask_price","confidence":0.88,"entities":{"package_query":"gold"}}'
+            'saya mau tanya harga paket gold untuk tanggal 21/12/2026 budget 15.000.000',
+            '{"intent":"ask_price","confidence":0.88,"entities":{"package_query":"gold","event_date":"21/12/2026","budget":"15.000.000"}}'
         );
 
         $this->assertSame(Intent::AskPrice, $result->intent);
@@ -33,6 +33,10 @@ class IntentClassifierTest extends TestCase
         $this->assertSame('gold', $result->entities['package_query']);
         $this->assertSame('gold', $result->entities['resolved_package_code']);
         $this->assertSame('Gold Package', $result->entities['resolved_package_name']);
+        $this->assertSame('2026-12-21', $result->entities['event_date_iso']);
+        $this->assertSame(15000000, $result->entities['budget_amount']);
+        $this->assertFalse($result->entities['is_correction']);
+        $this->assertSame([], $result->entities['corrected_fields']);
         $this->assertNull($result->fallbackReason);
     }
 
@@ -53,6 +57,10 @@ class IntentClassifierTest extends TestCase
         $this->assertNull($result->entities['package_query']);
         $this->assertNull($result->entities['resolved_package_code']);
         $this->assertNull($result->entities['resolved_package_name']);
+        $this->assertNull($result->entities['event_date_iso']);
+        $this->assertNull($result->entities['budget_amount']);
+        $this->assertFalse($result->entities['is_correction']);
+        $this->assertSame([], $result->entities['corrected_fields']);
         $this->assertSame('invalid_json', $result->fallbackReason);
     }
 
@@ -72,6 +80,10 @@ class IntentClassifierTest extends TestCase
         $this->assertSame('platinum', $result->entities['package_query']);
         $this->assertNull($result->entities['resolved_package_code']);
         $this->assertNull($result->entities['resolved_package_name']);
+        $this->assertNull($result->entities['event_date_iso']);
+        $this->assertNull($result->entities['budget_amount']);
+        $this->assertFalse($result->entities['is_correction']);
+        $this->assertSame([], $result->entities['corrected_fields']);
     }
 
     public function test_package_resolution_is_tenant_isolated(): void
@@ -91,6 +103,46 @@ class IntentClassifierTest extends TestCase
         $this->assertSame('silver', $result->entities['package_query']);
         $this->assertNull($result->entities['resolved_package_code']);
         $this->assertNull($result->entities['resolved_package_name']);
+        $this->assertNull($result->entities['event_date_iso']);
+        $this->assertNull($result->entities['budget_amount']);
+        $this->assertFalse($result->entities['is_correction']);
+        $this->assertSame([], $result->entities['corrected_fields']);
+    }
+
+    public function test_invalid_or_ambiguous_date_and_budget_return_null(): void
+    {
+        $tenant = $this->createTenantWithPackage('tenant-one', 'gold', 'Gold Package');
+
+        $classifier = app(DeterministicIntentClassifier::class);
+
+        $result = $classifier->classify(
+            $tenant->id,
+            'budget fleksibel, tanggal nanti saya kabari',
+            '{"intent":"booking_intent","confidence":0.7,"entities":{"package_query":"gold","event_date":"nanti","budget":"fleksibel"}}'
+        );
+
+        $this->assertSame(Intent::BookingIntent, $result->intent);
+        $this->assertSame('gold', $result->entities['resolved_package_code']);
+        $this->assertNull($result->entities['event_date_iso']);
+        $this->assertNull($result->entities['budget_amount']);
+    }
+
+    public function test_explicit_correction_sets_correction_flags_and_fields(): void
+    {
+        $tenant = $this->createTenantWithPackage('tenant-one', 'gold', 'Gold Package');
+
+        $classifier = app(DeterministicIntentClassifier::class);
+
+        $result = $classifier->classify(
+            $tenant->id,
+            'koreksi, bukan gold tapi silver. budget saya revisi jadi 20 juta',
+            '{"intent":"ask_price","confidence":0.86,"entities":{"package_query":"silver","correction":true,"corrected_fields":["package_query","budget"],"budget":"20 juta"}}'
+        );
+
+        $this->assertSame(Intent::AskPrice, $result->intent);
+        $this->assertTrue($result->entities['is_correction']);
+        $this->assertSame(['package_query', 'budget'], $result->entities['corrected_fields']);
+        $this->assertSame(20000000, $result->entities['budget_amount']);
     }
 
     private function createTenantWithPackage(string $slug, string $packageCode, string $packageName): Tenant
