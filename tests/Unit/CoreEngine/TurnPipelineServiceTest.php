@@ -247,6 +247,57 @@ class TurnPipelineServiceTest extends TestCase
         $this->assertSame(['permission_action_not_allowed'], $result['action_candidates']['blocked'][0]['reasons']);
     }
 
+    public function test_mode_validator_error_is_propagated_to_blocked_candidate_reason(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        ConversationState::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->update([
+                'agent_mode' => 'limited',
+            ]);
+
+        LeadProfile::query()->where('tenant_id', $tenant->id)->where('customer_phone', $conversation->customer_phone)->update([
+            'full_name' => 'Ayu',
+        ]);
+
+        $this->app->bind(PolicyValidator::class, fn () => new class implements PolicyValidator {
+            public function validate(array $candidate, array $context): ?string
+            {
+                return null;
+            }
+        });
+
+        $this->app->bind(GroundingValidator::class, fn () => new class implements GroundingValidator {
+            public function validate(array $candidate, array $context): ?string
+            {
+                return null;
+            }
+        });
+
+        $this->app->bind(ActionPermissionValidator::class, fn () => new class implements ActionPermissionValidator {
+            public function validate(array $candidate, array $context): ?string
+            {
+                return null;
+            }
+        });
+
+        $this->app->bind(ModeValidator::class, \App\Modules\Validation\Services\ModeValidatorService::class);
+
+        $this->bindLlmJson('{"intent":"ask_pricelist","confidence":0.9,"entities":{"package_query":"gold"}}');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'kirim pricelist',
+            'extract intent'
+        );
+
+        $this->assertSame('send_pricelist', $result['action_candidates']['blocked'][0]['action']);
+        $this->assertSame(['mode_limited_blocked_action'], $result['action_candidates']['blocked'][0]['reasons']);
+    }
+
     private function createConversation(): array
     {
         $tenant = Tenant::query()->create([
