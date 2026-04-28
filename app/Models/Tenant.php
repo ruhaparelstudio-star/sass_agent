@@ -100,4 +100,9 @@ class Tenant extends Model
     {
         return $this->hasMany(BookingSetting::class);
     }
+
+    public function tenantAssets(): HasMany
+    {
+        return $this->hasMany(TenantAsset::class);
+    }
 }
