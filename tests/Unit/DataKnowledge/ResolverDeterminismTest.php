@@ -3,6 +3,7 @@
 namespace Tests\Unit\DataKnowledge;
 
 use App\Models\Discount;
+use App\Models\KnowledgeVersion;
 use App\Models\Package;
 use App\Models\Price;
 use App\Models\Product;
@@ -23,6 +24,13 @@ class ResolverDeterminismTest extends TestCase
             'name' => 'Tenant One',
             'slug' => 'tenant-one',
             'is_active' => true,
+        ]);
+        KnowledgeVersion::query()->create([
+            'tenant_id' => $tenant->id,
+            'name' => 'v1',
+            'is_active' => true,
+            'effective_from' => now()->subDay(),
+            'effective_until' => now()->addDay(),
         ]);
 
         $catalogA = ServiceCatalog::query()->create([
@@ -78,6 +86,13 @@ class ResolverDeterminismTest extends TestCase
             'name' => 'Tenant One',
             'slug' => 'tenant-one',
             'is_active' => true,
+        ]);
+        KnowledgeVersion::query()->create([
+            'tenant_id' => $tenant->id,
+            'name' => 'v1',
+            'is_active' => true,
+            'effective_from' => now()->subDay(),
+            'effective_until' => now()->addDay(),
         ]);
 
         $catalog = ServiceCatalog::query()->create([

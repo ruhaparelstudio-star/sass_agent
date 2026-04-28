@@ -9,13 +9,17 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class PackagePricingResolver
 {
-    public function __construct(private readonly KnowledgeWindowScope $windowScope)
-    {
-    }
+    public function __construct(
+        private readonly KnowledgeWindowScope $windowScope,
+        private readonly KnowledgeVersionResolver $knowledgeVersionResolver,
+    ) {}
 
     public function resolvePackagePricing(int $tenantId, int $packageId, CarbonInterface $at): ?array
     {
         $this->assertTenantId($tenantId);
+        if ($this->knowledgeVersionResolver->resolveActiveVersion($tenantId, $at) === null) {
+            return null;
+        }
 
         $package = $this->windowScope
             ->apply(Package::query(), $tenantId, $at)

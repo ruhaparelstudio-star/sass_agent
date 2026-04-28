@@ -9,13 +9,17 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class FaqResolver
 {
-    public function __construct(private readonly KnowledgeWindowScope $windowScope)
-    {
-    }
+    public function __construct(
+        private readonly KnowledgeWindowScope $windowScope,
+        private readonly KnowledgeVersionResolver $knowledgeVersionResolver,
+    ) {}
 
     public function resolveFaq(int $tenantId, CarbonInterface $at): array
     {
         $this->assertTenantId($tenantId);
+        if ($this->knowledgeVersionResolver->resolveActiveVersion($tenantId, $at) === null) {
+            return [];
+        }
 
         $rows = $this->windowScope
             ->apply(Faq::query(), $tenantId, $at)

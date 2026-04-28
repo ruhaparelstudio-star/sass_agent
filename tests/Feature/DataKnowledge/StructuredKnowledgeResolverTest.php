@@ -4,6 +4,7 @@ namespace Tests\Feature\DataKnowledge;
 
 use App\Models\Discount;
 use App\Models\Faq;
+use App\Models\KnowledgeVersion;
 use App\Models\Package;
 use App\Models\Price;
 use App\Models\Product;
@@ -27,6 +28,7 @@ class StructuredKnowledgeResolverTest extends TestCase
             'slug' => 'tenant-one',
             'is_active' => true,
         ]);
+        $this->createKnowledgeVersion($tenant->id, now()->subDay(), now()->addDay());
 
         $catalog = ServiceCatalog::query()->create([
             'tenant_id' => $tenant->id,
@@ -124,6 +126,7 @@ class StructuredKnowledgeResolverTest extends TestCase
             'slug' => 'tenant-one',
             'is_active' => true,
         ]);
+        $this->createKnowledgeVersion($tenant->id, now()->subDay(), now()->addDay());
 
         Faq::query()->create([
             'tenant_id' => $tenant->id,
@@ -157,6 +160,7 @@ class StructuredKnowledgeResolverTest extends TestCase
             'slug' => 'tenant-one',
             'is_active' => true,
         ]);
+        $this->createKnowledgeVersion($tenant->id, now()->subDay(), now()->addDay());
 
         Faq::query()->create([
             'tenant_id' => $tenant->id,
@@ -197,15 +201,130 @@ class StructuredKnowledgeResolverTest extends TestCase
             'active_from' => now()->subDay(),
             'active_until' => now()->addDay(),
         ]);
+        $this->createKnowledgeVersion($tenantA->id, now()->subDay(), now()->addDay());
+        $this->createKnowledgeVersion($tenantB->id, now()->subDay(), now()->addDay());
 
         $faqs = app(FaqResolver::class)->resolveFaq($tenantB->id, now());
 
         $this->assertSame([], $faqs);
     }
 
+    public function test_missing_effective_version_returns_safe_empty_result(): void
+    {
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+
+        Faq::query()->create([
+            'tenant_id' => $tenant->id,
+            'question' => 'Should be blocked',
+            'answer' => 'Blocked by version gate.',
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+
+        $faqs = app(FaqResolver::class)->resolveFaq($tenant->id, now());
+
+        $this->assertSame([], $faqs);
+    }
+
+    public function test_expired_or_future_versions_block_resolution(): void
+    {
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+
+        Faq::query()->create([
+            'tenant_id' => $tenant->id,
+            'question' => 'Blocked by version date',
+            'answer' => 'Blocked.',
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+
+        $this->createKnowledgeVersion($tenant->id, now()->subDays(4), now()->subDay(), true, 'expired');
+        $this->createKnowledgeVersion($tenant->id, now()->addDay(), now()->addDays(3), true, 'future');
+
+        $faqs = app(FaqResolver::class)->resolveFaq($tenant->id, now());
+
+        $this->assertSame([], $faqs);
+    }
+
+    public function test_tenant_a_version_cannot_unlock_tenant_b_data(): void
+    {
+        $tenantA = Tenant::query()->create([
+            'name' => 'Tenant A',
+            'slug' => 'tenant-a',
+            'is_active' => true,
+        ]);
+
+        $tenantB = Tenant::query()->create([
+            'name' => 'Tenant B',
+            'slug' => 'tenant-b',
+            'is_active' => true,
+        ]);
+
+        Faq::query()->create([
+            'tenant_id' => $tenantB->id,
+            'question' => 'Tenant B FAQ',
+            'answer' => 'B',
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+
+        $this->createKnowledgeVersion($tenantA->id, now()->subDay(), now()->addDay());
+
+        $faqs = app(FaqResolver::class)->resolveFaq($tenantB->id, now());
+
+        $this->assertSame([], $faqs);
+    }
+
+    public function test_latest_effective_version_is_chosen_deterministically_when_windows_overlap(): void
+    {
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+        $this->createKnowledgeVersion($tenant->id, now()->subDays(3), now()->addDay(), true, 'older-window');
+        $newer = $this->createKnowledgeVersion($tenant->id, now()->subDay(), now()->addDays(2), true, 'newer-window');
+
+        $resolved = app(\App\Modules\DataKnowledge\Services\KnowledgeVersionResolver::class)
+            ->resolveActiveVersion($tenant->id, now());
+
+        $this->assertNotNull($resolved);
+        $this->assertSame($newer->id, $resolved->id);
+    }
+
     public function test_missing_tenant_context_is_rejected(): void
     {
         $this->expectException(HttpException::class);
         app(FaqResolver::class)->resolveFaq(0, now());
+    }
+
+    private function createKnowledgeVersion(
+        int $tenantId,
+        \Carbon\CarbonInterface $from,
+        ?\Carbon\CarbonInterface $until,
+        bool $isActive = true,
+        ?string $name = null,
+    ): KnowledgeVersion {
+        return KnowledgeVersion::query()->create([
+            'tenant_id' => $tenantId,
+            'name' => $name ?? 'v1',
+            'is_active' => $isActive,
+            'effective_from' => $from,
+            'effective_until' => $until,
+        ]);
     }
 }
