@@ -61,7 +61,7 @@ services:
     container_name: sass_agent_worker
     working_dir: /var/www/html
     user: "1000:1000"
-    command: php artisan queue:work redis --sleep=1 --tries=3 --timeout=90
+    command: php artisan queue:work --sleep=1 --tries=3 --timeout=90
     volumes:
       - ./:/var/www/html
     depends_on:

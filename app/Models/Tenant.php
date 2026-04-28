@@ -35,4 +35,29 @@ class Tenant extends Model
     {
         return $this->hasMany(WaSession::class);
     }
+
+    public function conversations(): HasMany
+    {
+        return $this->hasMany(Conversation::class);
+    }
+
+    public function messages(): HasMany
+    {
+        return $this->hasMany(Message::class);
+    }
+
+    public function leadProfiles(): HasMany
+    {
+        return $this->hasMany(LeadProfile::class);
+    }
+
+    public function leadScores(): HasMany
+    {
+        return $this->hasMany(LeadScore::class);
+    }
+
+    public function leadSources(): HasMany
+    {
+        return $this->hasMany(LeadSource::class);
+    }
 }

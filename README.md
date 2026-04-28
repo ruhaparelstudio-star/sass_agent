@@ -72,3 +72,8 @@ For one-off execution:
 ```bash
 docker compose exec -T app env XDG_CONFIG_HOME=/tmp php artisan tinker --execute="dump('OK');"
 ```
+
+
+
+#prompt/03-conversation
+##sessi terakhir
