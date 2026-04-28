@@ -4,6 +4,7 @@ namespace Tests\Feature\DataKnowledge;
 
 use App\Models\Discount;
 use App\Models\Faq;
+use App\Models\BookingSetting;
 use App\Models\KnowledgeVersion;
 use App\Models\Package;
 use App\Models\Price;
@@ -11,6 +12,7 @@ use App\Models\Product;
 use App\Models\ServiceCatalog;
 use App\Models\Tenant;
 use App\Modules\DataKnowledge\Services\CatalogResolver;
+use App\Modules\DataKnowledge\Services\BookingLinkResolver;
 use App\Modules\DataKnowledge\Services\FaqResolver;
 use App\Modules\DataKnowledge\Services\PackagePricingResolver;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -310,6 +312,148 @@ class StructuredKnowledgeResolverTest extends TestCase
     {
         $this->expectException(HttpException::class);
         app(FaqResolver::class)->resolveFaq(0, now());
+    }
+
+    public function test_active_booking_link_is_resolved_inside_window(): void
+    {
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+        $this->createKnowledgeVersion($tenant->id, now()->subDay(), now()->addDay());
+
+        BookingSetting::query()->create([
+            'tenant_id' => $tenant->id,
+            'booking_url' => 'https://book.example.com/tenant-one',
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+
+        $resolved = app(BookingLinkResolver::class)->resolveBookingLink($tenant->id, now());
+
+        $this->assertNotNull($resolved);
+        $this->assertSame('https://book.example.com/tenant-one', $resolved['booking_url']);
+    }
+
+    public function test_expired_and_future_booking_link_are_ignored(): void
+    {
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+        $this->createKnowledgeVersion($tenant->id, now()->subDay(), now()->addDay());
+
+        BookingSetting::query()->create([
+            'tenant_id' => $tenant->id,
+            'booking_url' => 'https://book.example.com/expired',
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDays(5),
+            'active_until' => now()->subDay(),
+        ]);
+
+        BookingSetting::query()->create([
+            'tenant_id' => $tenant->id,
+            'booking_url' => 'https://book.example.com/future',
+            'sort_order' => 2,
+            'is_active' => true,
+            'active_from' => now()->addDay(),
+            'active_until' => now()->addDays(3),
+        ]);
+
+        $resolved = app(BookingLinkResolver::class)->resolveBookingLink($tenant->id, now());
+
+        $this->assertNull($resolved);
+    }
+
+    public function test_cross_tenant_booking_link_access_is_blocked_by_scope(): void
+    {
+        $tenantA = Tenant::query()->create([
+            'name' => 'Tenant A',
+            'slug' => 'tenant-a',
+            'is_active' => true,
+        ]);
+
+        $tenantB = Tenant::query()->create([
+            'name' => 'Tenant B',
+            'slug' => 'tenant-b',
+            'is_active' => true,
+        ]);
+        $this->createKnowledgeVersion($tenantA->id, now()->subDay(), now()->addDay());
+        $this->createKnowledgeVersion($tenantB->id, now()->subDay(), now()->addDay());
+
+        BookingSetting::query()->create([
+            'tenant_id' => $tenantA->id,
+            'booking_url' => 'https://book.example.com/tenant-a',
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+
+        $resolved = app(BookingLinkResolver::class)->resolveBookingLink($tenantB->id, now());
+
+        $this->assertNull($resolved);
+    }
+
+    public function test_missing_effective_version_returns_null_booking_link(): void
+    {
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+
+        BookingSetting::query()->create([
+            'tenant_id' => $tenant->id,
+            'booking_url' => 'https://book.example.com/tenant-one',
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+
+        $resolved = app(BookingLinkResolver::class)->resolveBookingLink($tenant->id, now());
+
+        $this->assertNull($resolved);
+    }
+
+    public function test_booking_link_resolution_uses_deterministic_order(): void
+    {
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+        $this->createKnowledgeVersion($tenant->id, now()->subDay(), now()->addDay());
+
+        $first = BookingSetting::query()->create([
+            'tenant_id' => $tenant->id,
+            'booking_url' => 'https://book.example.com/first',
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+
+        BookingSetting::query()->create([
+            'tenant_id' => $tenant->id,
+            'booking_url' => 'https://book.example.com/second',
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+
+        $resolved = app(BookingLinkResolver::class)->resolveBookingLink($tenant->id, now());
+
+        $this->assertNotNull($resolved);
+        $this->assertSame($first->id, $resolved['id']);
+        $this->assertSame('https://book.example.com/first', $resolved['booking_url']);
     }
 
     private function createKnowledgeVersion(

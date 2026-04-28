@@ -95,4 +95,9 @@ class Tenant extends Model
     {
         return $this->hasMany(Faq::class);
     }
+
+    public function bookingSettings(): HasMany
+    {
+        return $this->hasMany(BookingSetting::class);
+    }
 }
