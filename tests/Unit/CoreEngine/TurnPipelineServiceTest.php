@@ -198,6 +198,55 @@ class TurnPipelineServiceTest extends TestCase
         $this->assertFalse($result['trace']['executed']);
     }
 
+    public function test_permission_validator_error_is_propagated_to_blocked_candidate_reason(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        LeadProfile::query()->where('tenant_id', $tenant->id)->where('customer_phone', $conversation->customer_phone)->update([
+            'full_name' => 'Ayu',
+        ]);
+
+        $this->app->bind(PolicyValidator::class, fn () => new class implements PolicyValidator {
+            public function validate(array $candidate, array $context): ?string
+            {
+                return null;
+            }
+        });
+
+        $this->app->bind(GroundingValidator::class, fn () => new class implements GroundingValidator {
+            public function validate(array $candidate, array $context): ?string
+            {
+                return null;
+            }
+        });
+
+        $this->app->bind(ActionPermissionValidator::class, fn () => new class implements ActionPermissionValidator {
+            public function validate(array $candidate, array $context): ?string
+            {
+                return 'permission_action_not_allowed';
+            }
+        });
+
+        $this->app->bind(ModeValidator::class, fn () => new class implements ModeValidator {
+            public function validate(array $candidate, array $context): ?string
+            {
+                return null;
+            }
+        });
+
+        $this->bindLlmJson('{"intent":"ask_pricelist","confidence":0.9,"entities":{"package_query":"gold"}}');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'kirim pricelist',
+            'extract intent'
+        );
+
+        $this->assertSame('send_pricelist', $result['action_candidates']['blocked'][0]['action']);
+        $this->assertSame(['permission_action_not_allowed'], $result['action_candidates']['blocked'][0]['reasons']);
+    }
+
     private function createConversation(): array
     {
         $tenant = Tenant::query()->create([
