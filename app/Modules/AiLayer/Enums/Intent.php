@@ -7,6 +7,7 @@ enum Intent: string
     case Greeting = 'greeting';
     case AskPackage = 'ask_package';
     case AskPrice = 'ask_price';
+    case AskPricelist = 'ask_pricelist';
     case AskAvailability = 'ask_availability';
     case BookingIntent = 'booking_intent';
     case Unknown = 'unknown';

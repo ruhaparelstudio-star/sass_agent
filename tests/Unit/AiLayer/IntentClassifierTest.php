@@ -187,6 +187,22 @@ class IntentClassifierTest extends TestCase
         $this->assertSame(20000000, $result->entities['budget_amount']);
     }
 
+    public function test_ask_pricelist_intent_is_recognized(): void
+    {
+        $tenant = $this->createTenantWithPackage('tenant-one', 'gold', 'Gold Package');
+
+        $classifier = app(DeterministicIntentClassifier::class);
+
+        $result = $classifier->classify(
+            $tenant->id,
+            'tolong kirim pricelist paket gold',
+            '{"intent":"ask_pricelist","confidence":0.91,"entities":{"package_query":"gold"}}'
+        );
+
+        $this->assertSame(Intent::AskPricelist, $result->intent);
+        $this->assertSame('gold', $result->entities['resolved_package_code']);
+    }
+
     private function createTenantWithPackage(string $slug, string $packageCode, string $packageName): Tenant
     {
         $tenant = Tenant::query()->create([
