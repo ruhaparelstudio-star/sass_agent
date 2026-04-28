@@ -60,4 +60,39 @@ class Tenant extends Model
     {
         return $this->hasMany(LeadSource::class);
     }
+
+    public function serviceCatalogs(): HasMany
+    {
+        return $this->hasMany(ServiceCatalog::class);
+    }
+
+    public function products(): HasMany
+    {
+        return $this->hasMany(Product::class);
+    }
+
+    public function packages(): HasMany
+    {
+        return $this->hasMany(Package::class);
+    }
+
+    public function packageItems(): HasMany
+    {
+        return $this->hasMany(PackageItem::class);
+    }
+
+    public function prices(): HasMany
+    {
+        return $this->hasMany(Price::class);
+    }
+
+    public function discounts(): HasMany
+    {
+        return $this->hasMany(Discount::class);
+    }
+
+    public function faqs(): HasMany
+    {
+        return $this->hasMany(Faq::class);
+    }
 }
