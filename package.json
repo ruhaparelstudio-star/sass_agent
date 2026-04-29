@@ -9,6 +9,14 @@
         "wa-gateway:dev": "npm --prefix wa-gateway run dev",
         "wa-gateway:test": "npm --prefix wa-gateway run test"
     },
+    "dependencies": {
+        "@inertiajs/react": "^2.0.0",
+        "clsx": "^2.1.1",
+        "lucide-react": "^0.539.0",
+        "react": "^19.1.1",
+        "react-dom": "^19.1.1",
+        "tailwind-merge": "^3.3.1"
+    },
     "devDependencies": {
         "@tailwindcss/vite": "^4.0.0",
         "concurrently": "^9.0.1",

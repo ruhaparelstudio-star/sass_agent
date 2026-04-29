@@ -25,8 +25,18 @@ class Conversation extends Model
         return $this->hasMany(Message::class);
     }
 
+    public function handoffs(): HasMany
+    {
+        return $this->hasMany(Handoff::class);
+    }
+
     public function state(): HasOne
     {
         return $this->hasOne(ConversationState::class);
+    }
+
+    public function contexts(): HasMany
+    {
+        return $this->hasMany(ConversationContext::class);
     }
 }

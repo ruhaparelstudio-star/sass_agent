@@ -1,10 +1,11 @@
 <?php
 
+use App\Http\Middleware\HandleInertiaRequests;
+use App\Modules\Auth\Http\Middleware\EnsureApiTokenAuthenticated;
+use App\Modules\WhatsApp\Http\Middleware\EnsureInternalSecret;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
-use App\Modules\Auth\Http\Middleware\EnsureApiTokenAuthenticated;
-use App\Modules\WhatsApp\Http\Middleware\EnsureInternalSecret;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -14,6 +15,10 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->web(append: [
+            HandleInertiaRequests::class,
+        ]);
+
         $middleware->alias([
             'api.token' => EnsureApiTokenAuthenticated::class,
             'wa.internal.secret' => EnsureInternalSecret::class,
