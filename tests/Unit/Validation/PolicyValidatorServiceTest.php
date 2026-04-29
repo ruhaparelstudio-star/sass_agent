@@ -12,11 +12,11 @@ class PolicyValidatorServiceTest extends TestCase
         $validator = new PolicyValidatorService;
 
         $reason = $validator->validate(
-            ['action' => 'send_pricelist'],
+            ['action' => 'send_file'],
             [
                 'policy' => [
                     'global' => [
-                        'blocked_actions' => ['send_pricelist'],
+                        'blocked_actions' => ['send_file'],
                     ],
                 ],
             ]
@@ -30,11 +30,11 @@ class PolicyValidatorServiceTest extends TestCase
         $validator = new PolicyValidatorService;
 
         $reason = $validator->validate(
-            ['action' => 'request_booking'],
+            ['action' => 'send_booking_link'],
             [
                 'policy' => [
                     'tenant' => [
-                        'blocked_actions' => ['request_booking'],
+                        'blocked_actions' => ['send_booking_link'],
                     ],
                 ],
             ]
@@ -48,11 +48,11 @@ class PolicyValidatorServiceTest extends TestCase
         $validator = new PolicyValidatorService;
 
         $reason = $validator->validate(
-            ['action' => 'send_pricelist'],
+            ['action' => 'send_file'],
             [
                 'policy' => [
                     'global' => [
-                        'blocked_actions' => ['request_booking'],
+                        'blocked_actions' => ['send_booking_link'],
                     ],
                     'tenant' => [
                         'blocked_actions' => [],
@@ -73,7 +73,7 @@ class PolicyValidatorServiceTest extends TestCase
         $validator = new PolicyValidatorService;
 
         $reason = $validator->validate(
-            ['action' => 'send_pricelist'],
+            ['action' => 'send_file'],
             [
                 'policy' => [
                     'business_hours' => [
@@ -92,7 +92,7 @@ class PolicyValidatorServiceTest extends TestCase
         $validator = new PolicyValidatorService;
 
         $reason = $validator->validate(
-            ['action' => 'send_pricelist'],
+            ['action' => 'send_file'],
             [
                 'policy' => [
                     'follow_up' => [
@@ -111,7 +111,7 @@ class PolicyValidatorServiceTest extends TestCase
         $validator = new PolicyValidatorService;
 
         $reason = $validator->validate(
-            ['action' => 'request_booking'],
+            ['action' => 'send_booking_link'],
             [
                 'policy' => [
                     'dormant' => [
@@ -130,14 +130,14 @@ class PolicyValidatorServiceTest extends TestCase
         $validator = new PolicyValidatorService;
 
         $reason = $validator->validate(
-            ['action' => 'send_pricelist'],
+            ['action' => 'send_file'],
             [
                 'policy' => [
                     'global' => [
-                        'blocked_actions' => ['send_pricelist'],
+                        'blocked_actions' => ['send_file'],
                     ],
                     'tenant' => [
-                        'blocked_actions' => ['send_pricelist'],
+                        'blocked_actions' => ['send_file'],
                     ],
                     'business_hours' => [
                         'enabled' => true,

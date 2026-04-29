@@ -7,12 +7,12 @@ use Tests\TestCase;
 
 class GroundingValidatorServiceTest extends TestCase
 {
-    public function test_blocks_send_pricelist_when_required_grounding_is_missing(): void
+    public function test_blocks_send_file_when_required_grounding_is_missing(): void
     {
         $validator = new GroundingValidatorService;
 
         $reason = $validator->validate(
-            ['action' => 'send_pricelist'],
+            ['action' => 'send_file'],
             [
                 'grounding' => [
                     'price' => ['is_grounded' => true],
@@ -25,12 +25,12 @@ class GroundingValidatorServiceTest extends TestCase
         $this->assertSame('grounding_package_missing_source', $reason);
     }
 
-    public function test_allows_send_pricelist_when_all_required_grounding_exists(): void
+    public function test_allows_send_file_when_all_required_grounding_exists(): void
     {
         $validator = new GroundingValidatorService;
 
         $reason = $validator->validate(
-            ['action' => 'send_pricelist'],
+            ['action' => 'send_file'],
             [
                 'grounding' => [
                     'price' => ['is_grounded' => true],
@@ -48,7 +48,7 @@ class GroundingValidatorServiceTest extends TestCase
         $validator = new GroundingValidatorService;
 
         $reason = $validator->validate(
-            ['action' => 'request_booking'],
+            ['action' => 'send_booking_link'],
             [
                 'grounding' => [
                     'package' => ['is_grounded' => false],
@@ -65,11 +65,11 @@ class GroundingValidatorServiceTest extends TestCase
         $validator = new GroundingValidatorService;
 
         $reason = $validator->validate(
-            ['action' => 'request_booking'],
+            ['action' => 'send_booking_link'],
             [
                 'tenant_id' => 999,
                 'policy' => [
-                    'global' => ['blocked_actions' => ['request_booking']],
+                    'global' => ['blocked_actions' => ['send_booking_link']],
                 ],
                 'grounding' => [
                     'package' => ['is_grounded' => true],

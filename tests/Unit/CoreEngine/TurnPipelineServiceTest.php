@@ -35,7 +35,7 @@ class TurnPipelineServiceTest extends TestCase
         );
 
         $this->assertCount(0, $result['action_candidates']['allowed']);
-        $this->assertSame('send_pricelist', $result['action_candidates']['blocked'][0]['action']);
+        $this->assertSame('send_file', $result['action_candidates']['blocked'][0]['action']);
         $this->assertSame(['missing_name'], $result['action_candidates']['blocked'][0]['reasons']);
         $this->assertStringContainsString('nama', mb_strtolower($result['response_plan']['message']));
     }
@@ -58,7 +58,7 @@ class TurnPipelineServiceTest extends TestCase
         );
 
         $this->assertCount(0, $result['action_candidates']['allowed']);
-        $this->assertSame('request_booking', $result['action_candidates']['blocked'][0]['action']);
+        $this->assertSame('send_booking_link', $result['action_candidates']['blocked'][0]['action']);
         $this->assertSame([
             'missing_event_date',
             'missing_availability_check',
@@ -229,14 +229,14 @@ class TurnPipelineServiceTest extends TestCase
         );
 
         $this->assertFalse($result['trace']['executed']);
-        $this->assertSame('send_pricelist', $result['trace']['action']);
+        $this->assertSame('send_file', $result['trace']['action']);
         $this->assertSame('blocked', $result['trace']['status']);
         $this->assertSame('missing_name', $result['trace']['reason']);
 
         $this->assertDatabaseHas('action_logs', [
             'tenant_id' => $tenant->id,
             'conversation_id' => $conversation->id,
-            'action' => 'send_pricelist',
+            'action' => 'send_file',
             'status' => 'blocked',
             'reason' => 'missing_name',
         ]);
@@ -287,7 +287,7 @@ class TurnPipelineServiceTest extends TestCase
             'extract intent'
         );
 
-        $this->assertSame('send_pricelist', $result['action_candidates']['blocked'][0]['action']);
+        $this->assertSame('send_file', $result['action_candidates']['blocked'][0]['action']);
         $this->assertSame(['permission_action_not_allowed'], $result['action_candidates']['blocked'][0]['reasons']);
     }
 
@@ -338,7 +338,7 @@ class TurnPipelineServiceTest extends TestCase
             'extract intent'
         );
 
-        $this->assertSame('send_pricelist', $result['action_candidates']['blocked'][0]['action']);
+        $this->assertSame('send_file', $result['action_candidates']['blocked'][0]['action']);
         $this->assertSame(['mode_limited_blocked_action'], $result['action_candidates']['blocked'][0]['reasons']);
     }
 

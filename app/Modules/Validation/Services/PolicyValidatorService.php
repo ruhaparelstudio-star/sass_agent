@@ -14,7 +14,7 @@ class PolicyValidatorService implements PolicyValidator
             return null;
         }
 
-        if (! in_array($action, ['send_pricelist', 'request_booking'], true)) {
+        if (! in_array($action, ['send_file', 'send_booking_link'], true)) {
             return null;
         }
 

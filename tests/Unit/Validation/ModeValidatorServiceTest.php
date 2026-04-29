@@ -12,7 +12,7 @@ class ModeValidatorServiceTest extends TestCase
         $validator = new ModeValidatorService;
 
         $reason = $validator->validate(
-            ['action' => 'send_pricelist'],
+            ['action' => 'send_file'],
             [
                 'state' => [
                     'agent_mode' => 'active',
@@ -28,7 +28,7 @@ class ModeValidatorServiceTest extends TestCase
         $validator = new ModeValidatorService;
 
         $reason = $validator->validate(
-            ['action' => 'send_pricelist'],
+            ['action' => 'send_file'],
             [
                 'state' => [
                     'agent_mode' => 'assistant',
@@ -44,7 +44,7 @@ class ModeValidatorServiceTest extends TestCase
         $validator = new ModeValidatorService;
 
         $reason = $validator->validate(
-            ['action' => 'send_pricelist'],
+            ['action' => 'send_file'],
             [
                 'state' => [
                     'agent_mode' => 'limited',
@@ -76,7 +76,7 @@ class ModeValidatorServiceTest extends TestCase
         $validator = new ModeValidatorService;
 
         $sensitiveActionReason = $validator->validate(
-            ['action' => 'send_pricelist'],
+            ['action' => 'send_file'],
             [
                 'state' => [
                     'agent_mode' => 'paused',
@@ -102,7 +102,7 @@ class ModeValidatorServiceTest extends TestCase
         $validator = new ModeValidatorService;
 
         $sensitiveActionReason = $validator->validate(
-            ['action' => 'send_pricelist'],
+            ['action' => 'send_file'],
             [
                 'state' => [
                     'agent_mode' => 'handoff',
@@ -128,7 +128,7 @@ class ModeValidatorServiceTest extends TestCase
         $validator = new ModeValidatorService;
 
         $reason = $validator->validate(
-            ['action' => 'send_pricelist'],
+            ['action' => 'send_file'],
             [
                 'state' => [
                     'agent_mode' => 'experimental',

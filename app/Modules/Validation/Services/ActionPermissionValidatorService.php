@@ -40,6 +40,6 @@ class ActionPermissionValidatorService implements ActionPermissionValidator
 
     private function isSensitiveAction(string $action): bool
     {
-        return in_array($action, ['send_pricelist', 'request_booking', 'send_invoice'], true);
+        return in_array($action, ['send_file', 'send_booking_link', 'send_invoice'], true);
     }
 }

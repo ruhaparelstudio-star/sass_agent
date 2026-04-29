@@ -188,7 +188,7 @@ class TurnPipelineService
         $missingName = trim((string) ($leadProfile?->full_name ?? '')) === '';
 
         return [
-            'action' => 'send_pricelist',
+            'action' => 'send_file',
             'reasons' => $missingName ? ['missing_name'] : [],
         ];
     }
@@ -214,7 +214,7 @@ class TurnPipelineService
         }
 
         return [
-            'action' => 'request_booking',
+            'action' => 'send_booking_link',
             'reasons' => $reasons,
         ];
     }

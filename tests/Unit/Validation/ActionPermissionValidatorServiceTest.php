@@ -12,11 +12,11 @@ class ActionPermissionValidatorServiceTest extends TestCase
         $validator = new ActionPermissionValidatorService;
 
         $reason = $validator->validate(
-            ['action' => 'send_pricelist'],
+            ['action' => 'send_file'],
             [
                 'permissions' => [
-                    'blocked_actions' => ['send_pricelist'],
-                    'allowed_actions' => ['send_pricelist'],
+                    'blocked_actions' => ['send_file'],
+                    'allowed_actions' => ['send_file'],
                 ],
             ]
         );
@@ -29,10 +29,10 @@ class ActionPermissionValidatorServiceTest extends TestCase
         $validator = new ActionPermissionValidatorService;
 
         $reason = $validator->validate(
-            ['action' => 'request_booking'],
+            ['action' => 'send_booking_link'],
             [
                 'permissions' => [
-                    'allowed_actions' => ['request_booking'],
+                    'allowed_actions' => ['send_booking_link'],
                 ],
             ]
         );
@@ -57,10 +57,10 @@ class ActionPermissionValidatorServiceTest extends TestCase
         $validator = new ActionPermissionValidatorService;
 
         $reason = $validator->validate(
-            ['action' => 'send_pricelist'],
+            ['action' => 'send_file'],
             [
                 'permissions' => [
-                    'allowed_actions' => ['request_booking'],
+                    'allowed_actions' => ['send_booking_link'],
                 ],
             ]
         );
@@ -90,10 +90,10 @@ class ActionPermissionValidatorServiceTest extends TestCase
         $validator = new ActionPermissionValidatorService;
 
         $reason = $validator->validate(
-            ['action' => 'send_pricelist'],
+            ['action' => 'send_file'],
             [
                 'permissions' => [
-                    'blocked_actions' => ['send_pricelist'],
+                    'blocked_actions' => ['send_file'],
                     'allowed_actions' => [],
                 ],
             ]
