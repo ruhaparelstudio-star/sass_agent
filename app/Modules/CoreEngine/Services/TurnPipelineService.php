@@ -3,6 +3,7 @@
 namespace App\Modules\CoreEngine\Services;
 
 use App\Models\Conversation;
+use App\Models\ConversationSummary;
 use App\Models\LeadProfile;
 use App\Models\Tenant;
 use App\Modules\AiLayer\Enums\Intent;
@@ -32,6 +33,7 @@ class TurnPipelineService
         array $context = []
     ): array {
         $state = $conversation->state()->firstOrFail();
+        $dormantRetrieval = $this->resolveDormantRetrieval($tenant, $conversation, $context);
 
         $interpretation = $this->interpretationService->interpret($tenant->id, $userMessage, $instruction);
 
@@ -115,7 +117,7 @@ class TurnPipelineService
             }
         }
 
-        return [
+        $response = [
             'intent' => $interpretation->intent->value,
             'entities' => $entities,
             'state_snapshot' => [
@@ -134,6 +136,73 @@ class TurnPipelineService
                 'status' => $dispatchTrace['status'],
                 'reason' => $dispatchTrace['reason'],
                 'validator_order' => ['policy', 'grounding', 'permission', 'mode'],
+                'dormant_retrieval' => [
+                    'triggered' => $dormantRetrieval['triggered'],
+                    'status' => $dormantRetrieval['status'],
+                    'reason' => $dormantRetrieval['reason'],
+                ],
+            ],
+        ];
+
+        if ($dormantRetrieval['status'] === 'loaded') {
+            $response['memory'] = [
+                'dormant' => $dormantRetrieval['data'],
+            ];
+        }
+
+        return $response;
+    }
+
+    /**
+     * @return array{
+     *   triggered:bool,
+     *   status:string,
+     *   reason:?string,
+     *   data:?array{summary:string,message_count:int,summarized_at:?string}
+     * }
+     */
+    private function resolveDormantRetrieval(Tenant $tenant, Conversation $conversation, array $context): array
+    {
+        if (($context['dormant_retrieval'] ?? false) !== true) {
+            return [
+                'triggered' => false,
+                'status' => 'not_requested',
+                'reason' => 'flag_not_set',
+                'data' => null,
+            ];
+        }
+
+        $summary = ConversationSummary::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->first();
+
+        if (! $summary) {
+            return [
+                'triggered' => true,
+                'status' => 'miss',
+                'reason' => 'not_found',
+                'data' => null,
+            ];
+        }
+
+        if ($summary->retention_until !== null && $summary->retention_until->lte(now())) {
+            return [
+                'triggered' => true,
+                'status' => 'miss',
+                'reason' => 'expired_retention',
+                'data' => null,
+            ];
+        }
+
+        return [
+            'triggered' => true,
+            'status' => 'loaded',
+            'reason' => null,
+            'data' => [
+                'summary' => $summary->summary,
+                'message_count' => $summary->message_count,
+                'summarized_at' => $summary->summarized_at?->toDateTimeString(),
             ],
         ];
     }

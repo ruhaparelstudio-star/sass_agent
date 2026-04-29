@@ -66,6 +66,124 @@ class TurnPipelineServiceTest extends TestCase
         $this->assertIsArray($result['state_snapshot']);
         $this->assertArrayNotHasKey('summary', $result['state_snapshot']);
         $this->assertArrayNotHasKey('memory', $result);
+        $this->assertSame([
+            'triggered' => false,
+            'status' => 'not_requested',
+            'reason' => 'flag_not_set',
+        ], $result['trace']['dormant_retrieval']);
+    }
+
+    public function test_pipeline_loads_dormant_summary_only_on_explicit_trigger_with_valid_retention(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        ConversationSummary::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'message_count' => 24,
+            'summary' => 'Dormant memory summary loaded by explicit trigger.',
+            'retention_until' => now()->addDays(7),
+            'summarized_at' => now(),
+        ]);
+
+        $this->bindLlmJson('{"intent":"ask_package","confidence":0.85,"entities":{}}');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'ada paket apa saja?',
+            'extract intent',
+            [
+                'dormant_retrieval' => true,
+            ]
+        );
+
+        $this->assertSame('Dormant memory summary loaded by explicit trigger.', $result['memory']['dormant']['summary']);
+        $this->assertSame(24, $result['memory']['dormant']['message_count']);
+        $this->assertNotNull($result['memory']['dormant']['summarized_at']);
+        $this->assertSame([
+            'triggered' => true,
+            'status' => 'loaded',
+            'reason' => null,
+        ], $result['trace']['dormant_retrieval']);
+    }
+
+    public function test_pipeline_ignores_dormant_summary_when_retention_has_expired_even_if_triggered(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        ConversationSummary::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'message_count' => 24,
+            'summary' => 'Expired dormant memory should not be loaded.',
+            'retention_until' => now()->subMinute(),
+            'summarized_at' => now(),
+        ]);
+
+        $this->bindLlmJson('{"intent":"ask_package","confidence":0.85,"entities":{}}');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'ada paket apa saja?',
+            'extract intent',
+            [
+                'dormant_retrieval' => true,
+            ]
+        );
+
+        $this->assertArrayNotHasKey('memory', $result);
+        $this->assertSame([
+            'triggered' => true,
+            'status' => 'miss',
+            'reason' => 'expired_retention',
+        ], $result['trace']['dormant_retrieval']);
+    }
+
+    public function test_pipeline_enforces_tenant_scope_for_dormant_retrieval_even_when_triggered(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        $otherTenant = Tenant::query()->create([
+            'name' => 'Tenant Two',
+            'slug' => 'tenant-two',
+            'is_active' => true,
+        ]);
+
+        $otherConversation = Conversation::query()->create([
+            'tenant_id' => $otherTenant->id,
+            'customer_phone' => '+628222222222',
+            'status' => 'open',
+        ]);
+
+        ConversationSummary::query()->create([
+            'tenant_id' => $otherTenant->id,
+            'conversation_id' => $otherConversation->id,
+            'message_count' => 30,
+            'summary' => 'Cross-tenant dormant memory must never load.',
+            'retention_until' => now()->addDays(5),
+            'summarized_at' => now(),
+        ]);
+
+        $this->bindLlmJson('{"intent":"ask_package","confidence":0.85,"entities":{}}');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'ada paket apa saja?',
+            'extract intent',
+            [
+                'dormant_retrieval' => true,
+            ]
+        );
+
+        $this->assertArrayNotHasKey('memory', $result);
+        $this->assertSame([
+            'triggered' => true,
+            'status' => 'miss',
+            'reason' => 'not_found',
+        ], $result['trace']['dormant_retrieval']);
     }
 
     public function test_booking_intent_with_missing_requirements_blocks_booking_candidate(): void
