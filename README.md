@@ -75,5 +75,5 @@ docker compose exec -T app env XDG_CONFIG_HOME=/tmp php artisan tinker --execute
 
 
 
-#prompt/03-conversation
+#prompt/07-validation-safety
 ##sessi terakhir

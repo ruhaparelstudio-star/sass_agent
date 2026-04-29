@@ -9,6 +9,7 @@ use App\Models\Tenant;
 use App\Modules\AiLayer\Contracts\LlmClientContract;
 use App\Modules\AiLayer\DTO\LlmResponse;
 use App\Modules\CoreEngine\Services\TurnPipelineService;
+use App\Modules\WhatsApp\Services\WaOutboundService;
 use App\Modules\Validation\Contracts\ActionPermissionValidator;
 use App\Modules\Validation\Contracts\GroundingValidator;
 use App\Modules\Validation\Contracts\ModeValidator;
@@ -181,9 +182,18 @@ class TurnPipelineServiceTest extends TestCase
         $this->assertSame(['policy_blocked'], $result['action_candidates']['blocked'][0]['reasons']);
     }
 
-    public function test_pipeline_never_dispatches_outbound_action(): void
+    public function test_pipeline_dispatches_allowed_candidate_through_dispatcher_without_direct_outbound_send(): void
     {
         [$tenant, $conversation] = $this->createConversation();
+
+        LeadProfile::query()->where('tenant_id', $tenant->id)->where('customer_phone', $conversation->customer_phone)->update([
+            'full_name' => 'Ayu',
+        ]);
+
+        $outboundService = $this->createMock(WaOutboundService::class);
+        $outboundService->expects($this->never())
+            ->method('queueOutboundMessage');
+        $this->app->instance(WaOutboundService::class, $outboundService);
 
         $this->bindLlmJson('{"intent":"ask_package","confidence":0.8,"entities":{}}');
 
@@ -194,8 +204,42 @@ class TurnPipelineServiceTest extends TestCase
             'extract intent'
         );
 
-        $this->assertArrayNotHasKey('dispatched_action', $result);
+        $this->assertTrue($result['trace']['executed']);
+        $this->assertSame('reply_safe_text', $result['trace']['action']);
+        $this->assertSame('executed', $result['trace']['status']);
+        $this->assertDatabaseHas('action_logs', [
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'action' => 'reply_safe_text',
+            'status' => 'executed',
+        ]);
+    }
+
+    public function test_blocked_candidate_remains_non_executed_and_still_logged(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        $this->bindLlmJson('{"intent":"ask_pricelist","confidence":0.91,"entities":{"package_query":"gold"}}');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'boleh kirim pricelist paket gold?',
+            'extract intent'
+        );
+
         $this->assertFalse($result['trace']['executed']);
+        $this->assertSame('send_pricelist', $result['trace']['action']);
+        $this->assertSame('blocked', $result['trace']['status']);
+        $this->assertSame('missing_name', $result['trace']['reason']);
+
+        $this->assertDatabaseHas('action_logs', [
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'action' => 'send_pricelist',
+            'status' => 'blocked',
+            'reason' => 'missing_name',
+        ]);
     }
 
     public function test_permission_validator_error_is_propagated_to_blocked_candidate_reason(): void

@@ -7,6 +7,7 @@ use App\Models\LeadProfile;
 use App\Models\Tenant;
 use App\Modules\AiLayer\Enums\Intent;
 use App\Modules\AiLayer\Services\InterpretationService;
+use App\Modules\Action\Services\ActionDispatcherService;
 use App\Modules\Validation\Contracts\ActionPermissionValidator;
 use App\Modules\Validation\Contracts\GroundingValidator;
 use App\Modules\Validation\Contracts\ModeValidator;
@@ -16,6 +17,7 @@ class TurnPipelineService
 {
     public function __construct(
         private readonly InterpretationService $interpretationService,
+        private readonly ActionDispatcherService $actionDispatcherService,
         private readonly PolicyValidator $policyValidator,
         private readonly GroundingValidator $groundingValidator,
         private readonly ActionPermissionValidator $actionPermissionValidator,
@@ -56,8 +58,22 @@ class TurnPipelineService
             'blocked' => [],
         ];
 
+        $dispatchTrace = [
+            'executed' => false,
+            'action' => $candidate['action'] ?? null,
+            'status' => 'blocked',
+            'reason' => null,
+        ];
+
         if (($candidate['reasons'] ?? []) !== []) {
             $result['blocked'][] = $candidate;
+            $dispatchResult = $this->actionDispatcherService->dispatch($tenant, $conversation, $candidate);
+            $dispatchTrace = [
+                'executed' => ($dispatchResult['status'] ?? null) === 'executed',
+                'action' => $dispatchResult['action'] ?? ($candidate['action'] ?? null),
+                'status' => $dispatchResult['status'] ?? 'blocked',
+                'reason' => $dispatchResult['reason'] ?? null,
+            ];
         } else {
             $validationContext = [
                 'tenant_id' => $tenant->id,
@@ -73,8 +89,22 @@ class TurnPipelineService
             if ($validationError !== null) {
                 $candidate['reasons'] = [$validationError];
                 $result['blocked'][] = $candidate;
+                $dispatchResult = $this->actionDispatcherService->dispatch($tenant, $conversation, $candidate);
+                $dispatchTrace = [
+                    'executed' => ($dispatchResult['status'] ?? null) === 'executed',
+                    'action' => $dispatchResult['action'] ?? ($candidate['action'] ?? null),
+                    'status' => $dispatchResult['status'] ?? 'blocked',
+                    'reason' => $dispatchResult['reason'] ?? null,
+                ];
             } else {
                 $result['allowed'][] = $candidate;
+                $dispatchResult = $this->actionDispatcherService->dispatch($tenant, $conversation, $candidate);
+                $dispatchTrace = [
+                    'executed' => ($dispatchResult['status'] ?? null) === 'executed',
+                    'action' => $dispatchResult['action'] ?? ($candidate['action'] ?? null),
+                    'status' => $dispatchResult['status'] ?? 'blocked',
+                    'reason' => $dispatchResult['reason'] ?? null,
+                ];
             }
         }
 
@@ -92,7 +122,10 @@ class TurnPipelineService
                 'message' => $this->buildResponsePlanMessage($result),
             ],
             'trace' => [
-                'executed' => false,
+                'executed' => $dispatchTrace['executed'],
+                'action' => $dispatchTrace['action'],
+                'status' => $dispatchTrace['status'],
+                'reason' => $dispatchTrace['reason'],
                 'validator_order' => ['policy', 'grounding', 'permission', 'mode'],
             ],
         ];
