@@ -15,8 +15,14 @@ class EnsureInternalSecret
     public function handle(Request $request, Closure $next): Response
     {
         $secret = (string) config('whatsapp.internal_secret', '');
+        $appEnv = (string) config('app.env', 'production');
+        $isTesting = $appEnv === 'testing';
 
         if ($secret === '') {
+            if (! $isTesting) {
+                return new JsonResponse(['message' => 'Forbidden'], 403);
+            }
+
             return $next($request);
         }
 

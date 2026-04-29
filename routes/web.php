@@ -88,7 +88,7 @@ Route::get('/health', function () {
     ]);
 });
 
-Route::get('/health/db', function () {
+Route::middleware('wa.internal.secret')->get('/health/db', function () {
     DB::connection()->getPdo();
 
     return response()->json([
@@ -97,7 +97,7 @@ Route::get('/health/db', function () {
     ]);
 });
 
-Route::get('/health/redis', function () {
+Route::middleware('wa.internal.secret')->get('/health/redis', function () {
     Redis::connection()->ping();
 
     return response()->json([

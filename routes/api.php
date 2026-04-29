@@ -35,7 +35,8 @@ Route::middleware(['auth:sanctum', 'api.token'])->group(function (): void {
     Route::middleware(['wa.internal.secret'])->prefix('internal/whatsapp')->group(function (): void {
         Route::post('/accounts/upsert', [WaInternalController::class, 'upsertAccount']);
         Route::post('/sessions/upsert', [WaInternalController::class, 'upsertSession']);
-        Route::post('/inbound-messages', [WaInternalController::class, 'storeInboundMessage']);
+        Route::post('/inbound-messages', [WaInternalController::class, 'storeInboundMessage'])
+            ->middleware('wa.inbound.rate_limit');
         Route::post('/outbound-messages', [WaInternalController::class, 'queueOutboundMessage']);
     });
 });

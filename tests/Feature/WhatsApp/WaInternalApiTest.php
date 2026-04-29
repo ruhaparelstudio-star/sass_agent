@@ -59,6 +59,42 @@ class WaInternalApiTest extends TestCase
             ->assertOk();
     }
 
+    public function test_internal_secret_missing_config_is_blocked_in_non_testing_environment(): void
+    {
+        Config::set('app.env', 'production');
+        Config::set('whatsapp.internal_secret', '');
+
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+
+        $admin = User::factory()->create([
+            'role' => 'tenant_admin',
+            'password' => 'password',
+        ]);
+        $admin->tenants()->attach($tenant->id);
+
+        $token = $this->postJson('/api/auth/login', [
+            'email' => $admin->email,
+            'password' => 'password',
+        ])->json('token');
+
+        $payload = [
+            'tenant_id' => $tenant->id,
+            'provider' => 'meta',
+            'provider_ref' => 'acct-001',
+            'status' => 'disconnected',
+            'phone' => '+628111111111',
+            'payload' => ['event' => 'created'],
+        ];
+
+        $this->withToken($token)
+            ->postJson('/api/internal/whatsapp/accounts/upsert', $payload)
+            ->assertForbidden();
+    }
+
     public function test_tenant_scope_and_duplicate_protection_are_enforced_for_account_upsert(): void
     {
         Config::set('whatsapp.internal_secret', 'wa-internal-secret');
@@ -429,6 +465,144 @@ class WaInternalApiTest extends TestCase
         ])->assertStatus(422);
     }
 
+    public function test_inbound_message_rate_limit_blocks_spam_burst_per_tenant_and_phone(): void
+    {
+        Config::set('whatsapp.internal_secret', 'wa-internal-secret');
+        Config::set('whatsapp.inbound_rate_limit.max_attempts', 30);
+        Config::set('whatsapp.inbound_rate_limit.decay_seconds', 60);
+
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+
+        [$token, $headers] = $this->issueInternalApiTokenForTenant($tenant);
+        $this->provisionInboundReferences($token, $headers, $tenant->id);
+
+        for ($index = 1; $index <= 30; $index++) {
+            $this->withToken($token)->withHeaders($headers)->postJson('/api/internal/whatsapp/inbound-messages', [
+                ...$this->baseInboundPayload($tenant->id, '+628111'),
+                'provider_message_id' => 'msg-'.$index,
+            ])->assertOk();
+        }
+
+        $this->withToken($token)->withHeaders($headers)->postJson('/api/internal/whatsapp/inbound-messages', [
+            ...$this->baseInboundPayload($tenant->id, '+628111'),
+            'provider_message_id' => 'msg-31',
+        ])->assertStatus(429);
+    }
+
+    public function test_inbound_message_rate_limit_isolated_between_tenants(): void
+    {
+        Config::set('whatsapp.internal_secret', 'wa-internal-secret');
+        Config::set('whatsapp.inbound_rate_limit.max_attempts', 1);
+        Config::set('whatsapp.inbound_rate_limit.decay_seconds', 60);
+
+        $tenantOne = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+        $tenantTwo = Tenant::query()->create([
+            'name' => 'Tenant Two',
+            'slug' => 'tenant-two',
+            'is_active' => true,
+        ]);
+
+        $admin = User::factory()->create([
+            'role' => 'tenant_admin',
+            'password' => 'password',
+        ]);
+        $admin->tenants()->attach([$tenantOne->id, $tenantTwo->id]);
+
+        $token = $this->postJson('/api/auth/login', [
+            'email' => $admin->email,
+            'password' => 'password',
+        ])->json('token');
+        $headers = ['X-Internal-Secret' => 'wa-internal-secret'];
+
+        $this->provisionInboundReferences($token, $headers, $tenantOne->id);
+        $this->provisionInboundReferences($token, $headers, $tenantTwo->id);
+
+        $this->withToken($token)->withHeaders($headers)->postJson('/api/internal/whatsapp/inbound-messages', [
+            ...$this->baseInboundPayload($tenantOne->id, '+628111'),
+            'provider_message_id' => 'tenant-1-msg-1',
+        ])->assertOk();
+
+        $this->withToken($token)->withHeaders($headers)->postJson('/api/internal/whatsapp/inbound-messages', [
+            ...$this->baseInboundPayload($tenantOne->id, '+628111'),
+            'provider_message_id' => 'tenant-1-msg-2',
+        ])->assertStatus(429);
+
+        $this->withToken($token)->withHeaders($headers)->postJson('/api/internal/whatsapp/inbound-messages', [
+            ...$this->baseInboundPayload($tenantTwo->id, '+628111'),
+            'provider_message_id' => 'tenant-2-msg-1',
+        ])->assertOk();
+    }
+
+    public function test_inbound_message_rate_limit_isolated_between_phones_same_tenant(): void
+    {
+        Config::set('whatsapp.internal_secret', 'wa-internal-secret');
+        Config::set('whatsapp.inbound_rate_limit.max_attempts', 1);
+        Config::set('whatsapp.inbound_rate_limit.decay_seconds', 60);
+
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+
+        [$token, $headers] = $this->issueInternalApiTokenForTenant($tenant);
+        $this->provisionInboundReferences($token, $headers, $tenant->id);
+
+        $this->withToken($token)->withHeaders($headers)->postJson('/api/internal/whatsapp/inbound-messages', [
+            ...$this->baseInboundPayload($tenant->id, '+628111'),
+            'provider_message_id' => 'phone-a-msg-1',
+        ])->assertOk();
+
+        $this->withToken($token)->withHeaders($headers)->postJson('/api/internal/whatsapp/inbound-messages', [
+            ...$this->baseInboundPayload($tenant->id, '+628111'),
+            'provider_message_id' => 'phone-a-msg-2',
+        ])->assertStatus(429);
+
+        $this->withToken($token)->withHeaders($headers)->postJson('/api/internal/whatsapp/inbound-messages', [
+            ...$this->baseInboundPayload($tenant->id, '+628222'),
+            'provider_message_id' => 'phone-b-msg-1',
+        ])->assertOk();
+    }
+
+    public function test_inbound_message_rate_limit_returns_sanitized_429_payload(): void
+    {
+        Config::set('whatsapp.internal_secret', 'wa-internal-secret');
+        Config::set('whatsapp.inbound_rate_limit.max_attempts', 1);
+        Config::set('whatsapp.inbound_rate_limit.decay_seconds', 60);
+
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+
+        [$token, $headers] = $this->issueInternalApiTokenForTenant($tenant);
+        $this->provisionInboundReferences($token, $headers, $tenant->id);
+
+        $this->withToken($token)->withHeaders($headers)->postJson('/api/internal/whatsapp/inbound-messages', [
+            ...$this->baseInboundPayload($tenant->id, '+628111'),
+            'provider_message_id' => 'sanitized-msg-1',
+        ])->assertOk();
+
+        $response = $this->withToken($token)->withHeaders($headers)->postJson('/api/internal/whatsapp/inbound-messages', [
+            ...$this->baseInboundPayload($tenant->id, '+628111'),
+            'provider_message_id' => 'sanitized-msg-2',
+            'meta' => ['secret' => 'do-not-leak'],
+        ]);
+
+        $response
+            ->assertStatus(429)
+            ->assertExactJson(['message' => 'Too Many Requests']);
+    }
+
     public function test_outbound_message_requires_internal_secret_when_configured(): void
     {
         Queue::fake();
@@ -605,5 +779,64 @@ class WaInternalApiTest extends TestCase
             'message_type' => 'text',
             'payload' => 'bad-payload',
         ])->assertStatus(422);
+    }
+
+    /**
+     * @return array{0:string,1:array<string,string>}
+     */
+    private function issueInternalApiTokenForTenant(Tenant $tenant): array
+    {
+        $admin = User::factory()->create([
+            'role' => 'tenant_admin',
+            'password' => 'password',
+        ]);
+        $admin->tenants()->attach($tenant->id);
+
+        $token = $this->postJson('/api/auth/login', [
+            'email' => $admin->email,
+            'password' => 'password',
+        ])->json('token');
+
+        return [$token, ['X-Internal-Secret' => 'wa-internal-secret']];
+    }
+
+    private function provisionInboundReferences(string $token, array $headers, int $tenantId): void
+    {
+        $this->withToken($token)->withHeaders($headers)->postJson('/api/internal/whatsapp/accounts/upsert', [
+            'tenant_id' => $tenantId,
+            'provider' => 'meta',
+            'provider_ref' => 'acct-001',
+            'status' => 'connected',
+            'phone' => '+628166666666',
+            'payload' => ['event' => 'connected'],
+        ])->assertOk();
+
+        $this->withToken($token)->withHeaders($headers)->postJson('/api/internal/whatsapp/sessions/upsert', [
+            'tenant_id' => $tenantId,
+            'wa_account_provider_ref' => 'acct-001',
+            'provider' => 'meta',
+            'provider_ref' => 'sess-001',
+            'status' => 'active',
+            'payload' => ['event' => 'active'],
+        ])->assertOk();
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function baseInboundPayload(int $tenantId, string $from): array
+    {
+        return [
+            'tenant_id' => $tenantId,
+            'provider' => 'meta',
+            'provider_message_id' => 'msg-default',
+            'wa_account_provider_ref' => 'acct-001',
+            'wa_session_provider_ref' => 'sess-001',
+            'from' => $from,
+            'to' => '+628222',
+            'message_type' => 'text',
+            'message_timestamp' => '2026-04-28T10:00:00+00:00',
+            'payload' => ['text' => 'hello'],
+        ];
     }
 }
