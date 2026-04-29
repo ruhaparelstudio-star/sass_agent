@@ -75,6 +75,9 @@ class TurnPipelineService
                 'reason' => $dispatchResult['reason'] ?? null,
             ];
         } else {
+            $calendarCheck = $this->normalizeCalendarCheck($context['calendar_check'] ?? null);
+            $grounding = $this->mergeGrounding($context['grounding'] ?? null, $calendarCheck);
+
             $validationContext = [
                 'tenant_id' => $tenant->id,
                 'state' => [
@@ -82,6 +85,10 @@ class TurnPipelineService
                     'active_goal' => $state->active_goal,
                 ],
                 'entities' => $entities,
+                'grounding' => $grounding,
+                'policy' => is_array($context['policy'] ?? null) ? $context['policy'] : [],
+                'permissions' => is_array($context['permissions'] ?? null) ? $context['permissions'] : null,
+                'calendar_check' => $calendarCheck,
             ];
 
             $validationError = $this->runValidators($candidate, $validationContext);
@@ -267,5 +274,49 @@ class TurnPipelineService
             Intent::AskAvailability => 'availability',
             default => null,
         };
+    }
+
+    /**
+     * @return array{status:string,checked:bool,available:bool,reason:?string,source:string}
+     */
+    private function normalizeCalendarCheck(mixed $value): array
+    {
+        if (! is_array($value)) {
+            return [
+                'status' => 'blocked',
+                'checked' => false,
+                'available' => false,
+                'reason' => 'calendar_check_missing',
+                'source' => 'context_missing',
+            ];
+        }
+
+        return [
+            'status' => is_string($value['status'] ?? null) ? $value['status'] : 'blocked',
+            'checked' => ($value['checked'] ?? false) === true,
+            'available' => ($value['available'] ?? false) === true,
+            'reason' => is_string($value['reason'] ?? null) ? $value['reason'] : null,
+            'source' => is_string($value['source'] ?? null) ? $value['source'] : 'context',
+        ];
+    }
+
+    /**
+     * @param  mixed  $grounding
+     * @param  array{status:string,checked:bool,available:bool,reason:?string,source:string}  $calendarCheck
+     * @return array<string,mixed>
+     */
+    private function mergeGrounding(mixed $grounding, array $calendarCheck): array
+    {
+        $resolved = is_array($grounding) ? $grounding : [];
+
+        if (! array_key_exists('calendar', $resolved)) {
+            $resolved['calendar'] = [
+                'is_grounded' => $calendarCheck['checked'] === true && $calendarCheck['available'] === true,
+                'reason' => $calendarCheck['reason'],
+                'source' => $calendarCheck['source'],
+            ];
+        }
+
+        return $resolved;
     }
 }

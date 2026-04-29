@@ -1,6 +1,8 @@
 import React from 'react'
 import { router } from '@inertiajs/react'
 import TenantLayout from '../../layouts/TenantLayout'
+import { Button } from '../../components/ui/button'
+import { Save, Upload } from 'lucide-react'
 
 export default function BusinessData({ data, assets }) {
   const submitCatalog = (event) => {
@@ -30,7 +32,7 @@ export default function BusinessData({ data, assets }) {
             <input name="code" className="w-full rounded border p-2" placeholder="Code" required />
             <input name="name" className="w-full rounded border p-2" placeholder="Name" required />
             <textarea name="description" className="w-full rounded border p-2" placeholder="Description" />
-            <button className="rounded bg-emerald-600 px-3 py-2 text-sm text-white" type="submit">Save Catalog</button>
+            <Button type="submit" leftIcon={Save}>Save Catalog</Button>
           </form>
         </div>
 
@@ -39,14 +41,14 @@ export default function BusinessData({ data, assets }) {
           <form className="mt-3 space-y-2" onSubmit={submitPricelist} encType="multipart/form-data">
             <input name="display_name" className="w-full rounded border p-2" placeholder="Display Name" />
             <input name="file" type="file" accept="application/pdf" className="w-full rounded border p-2" required />
-            <button className="rounded bg-blue-600 px-3 py-2 text-sm text-white" type="submit">Upload Pricelist</button>
+            <Button type="submit" leftIcon={Upload}>Upload Pricelist</Button>
           </form>
 
           <h2 className="mt-5 font-semibold">Upload Invoice PDF</h2>
           <form className="mt-3 space-y-2" onSubmit={submitInvoice} encType="multipart/form-data">
             <input name="display_name" className="w-full rounded border p-2" placeholder="Display Name" />
             <input name="file" type="file" accept="application/pdf" className="w-full rounded border p-2" required />
-            <button className="rounded bg-violet-600 px-3 py-2 text-sm text-white" type="submit">Upload Invoice</button>
+            <Button type="submit" leftIcon={Upload}>Upload Invoice</Button>
           </form>
         </div>
       </section>

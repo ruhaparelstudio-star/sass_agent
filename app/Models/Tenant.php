@@ -105,4 +105,19 @@ class Tenant extends Model
     {
         return $this->hasMany(TenantAsset::class);
     }
+
+    public function calendarConnections(): HasMany
+    {
+        return $this->hasMany(CalendarConnection::class);
+    }
+
+    public function calendarSettings(): HasMany
+    {
+        return $this->hasMany(CalendarSetting::class);
+    }
+
+    public function calendarAvailabilityChecks(): HasMany
+    {
+        return $this->hasMany(CalendarAvailabilityCheck::class);
+    }
 }

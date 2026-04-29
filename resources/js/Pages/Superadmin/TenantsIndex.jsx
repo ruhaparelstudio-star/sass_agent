@@ -4,6 +4,7 @@ import SuperadminLayout from '../../layouts/SuperadminLayout'
 import { Card } from '../../components/ui/card'
 import { Button } from '../../components/ui/button'
 import { Badge } from '../../components/ui/badge'
+import { Plus } from 'lucide-react'
 
 export default function TenantsIndex({ tenants }) {
   return (
@@ -11,7 +12,7 @@ export default function TenantsIndex({ tenants }) {
       <Head title="Manajemen Tenant" />
 
       <div className="mb-3 flex justify-end">
-        <Link href="/superadmin/tenants/create"><Button>Buat Tenant</Button></Link>
+        <Link href="/superadmin/tenants/create"><Button leftIcon={Plus}>Buat Tenant</Button></Link>
       </div>
 
       <Card>

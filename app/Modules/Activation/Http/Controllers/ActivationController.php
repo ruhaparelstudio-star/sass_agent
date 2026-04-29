@@ -6,7 +6,11 @@ use App\Http\Controllers\Controller;
 use App\Models\Tenant;
 use App\Modules\Activation\Services\ActivationService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Inertia\Inertia;
+use Inertia\Response;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class ActivationController extends Controller
 {
@@ -64,5 +68,53 @@ class ActivationController extends Controller
 
         return response()->json(['data' => $result]);
     }
-}
 
+    public function webShow(Request $request): Response
+    {
+        $payload = $request->validate([
+            'token' => ['nullable', 'string'],
+            'email' => ['nullable', 'email'],
+        ]);
+
+        $token = (string) ($payload['token'] ?? '');
+        $email = (string) ($payload['email'] ?? '');
+
+        $status = 'invalid';
+        if ($token !== '' && $email !== '') {
+            $status = $this->activationService->verifyToken($token, $email)['status'];
+        }
+
+        return Inertia::render('Auth/Activation', [
+            'token' => $token,
+            'email' => $email,
+            'status' => $status,
+        ]);
+    }
+
+    public function webSetPassword(Request $request): RedirectResponse
+    {
+        $payload = $request->validate([
+            'token' => ['required', 'string'],
+            'email' => ['required', 'email'],
+            'password' => ['required', 'string', 'confirmed', 'min:8'],
+        ]);
+
+        try {
+            $this->activationService->setPassword(
+                $payload['token'],
+                $payload['email'],
+                $payload['password'],
+            );
+        } catch (HttpException $exception) {
+            if ($exception->getStatusCode() === 422) {
+                return back()->withErrors([
+                    'activation' => $exception->getMessage(),
+                ]);
+            }
+
+            throw $exception;
+        }
+
+        return redirect('/login')->with('success', 'Akun berhasil diaktifkan. Silakan login.');
+    }
+}

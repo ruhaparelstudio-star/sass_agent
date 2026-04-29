@@ -4,6 +4,7 @@ import SuperadminLayout from '../../layouts/SuperadminLayout'
 import { Card } from '../../components/ui/card'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
+import { UserX } from 'lucide-react'
 
 export default function TenantsShow({ tenant }) {
   return (
@@ -27,7 +28,9 @@ export default function TenantsShow({ tenant }) {
 
         {tenant.is_active ? (
           <div className="mt-4">
-            <Button variant="destructive" type="button" onClick={() => router.post(`/superadmin/tenants/${tenant.id}/deactivate`)}>Nonaktifkan Tenant</Button>
+            <Button variant="destructive" type="button" leftIcon={UserX} onClick={() => router.post(`/superadmin/tenants/${tenant.id}/deactivate`)}>
+              Nonaktifkan Tenant
+            </Button>
           </div>
         ) : null}
       </Card>

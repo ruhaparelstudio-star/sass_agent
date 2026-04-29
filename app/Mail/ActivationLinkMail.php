@@ -27,13 +27,16 @@ class ActivationLinkMail extends Mailable
 
     public function content(): Content
     {
+        $base = rtrim((string) config('app.url'), '/');
+        $activationUrl = $base.'/activation?token='.rawurlencode($this->token).'&email='.rawurlencode($this->email);
+
         return new Content(
             text: 'emails.activation_link',
             with: [
                 'token' => $this->token,
                 'email' => $this->email,
+                'activation_url' => $activationUrl,
             ],
         );
     }
 }
-

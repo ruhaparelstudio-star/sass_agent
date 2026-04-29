@@ -5,6 +5,7 @@ import { Card } from '../../components/ui/card'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { Select } from '../../components/ui/select'
+import { Plus, Save, Pencil, Trash2 } from 'lucide-react'
 
 export default function PlansEdit({ plan }) {
   const { errors } = usePage().props
@@ -33,7 +34,7 @@ export default function PlansEdit({ plan }) {
           <div><label className="mb-1 block text-sm font-medium">Nama</label><Input value={form.data.name} onChange={(e) => form.setData('name', e.target.value)} required />{errors.name ? <p className="mt-1 text-xs text-red-600">{errors.name}</p> : null}</div>
           <div><label className="mb-1 block text-sm font-medium">Slug</label><Input value={form.data.slug} onChange={(e) => form.setData('slug', e.target.value)} required />{errors.slug ? <p className="mt-1 text-xs text-red-600">{errors.slug}</p> : null}</div>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.data.is_active} onChange={(e) => form.setData('is_active', e.target.checked)} /> Aktif</label>
-          <Button type="submit">Simpan</Button>
+          <Button type="submit" leftIcon={Save}>Simpan</Button>
         </form>
       </Card>
 
@@ -45,7 +46,7 @@ export default function PlansEdit({ plan }) {
           <div><label className="mb-1 block text-xs font-medium">Nilai String</label><Input value={createFeature.data.value_string} onChange={(e) => createFeature.setData('value_string', e.target.value)} /></div>
           <div><label className="mb-1 block text-xs font-medium">Nilai Int</label><Input type="number" value={createFeature.data.value_int} onChange={(e) => createFeature.setData('value_int', e.target.value)} /></div>
           <div><label className="mb-1 block text-xs font-medium">Nilai Bool</label><Select value={createFeature.data.value_bool} onChange={(e) => createFeature.setData('value_bool', e.target.value)}><option value="">-</option><option value="1">true</option><option value="0">false</option></Select></div>
-          <div className="md:col-span-5"><Button type="submit">Tambah Fitur</Button></div>
+          <div className="md:col-span-5"><Button type="submit" leftIcon={Plus}>Tambah Fitur</Button></div>
         </form>
       </Card>
 
@@ -60,10 +61,10 @@ export default function PlansEdit({ plan }) {
                 <div><label className="mb-1 block text-xs font-medium">Nilai String</label><Input name="value_string" defaultValue={feature.value_string ?? ''} /></div>
                 <div><label className="mb-1 block text-xs font-medium">Nilai Int</label><Input type="number" name="value_int" defaultValue={feature.value_int ?? ''} /></div>
                 <div><label className="mb-1 block text-xs font-medium">Nilai Bool</label><Select name="value_bool" defaultValue={feature.value_bool === true ? '1' : feature.value_bool === false ? '0' : ''}><option value="">-</option><option value="1">true</option><option value="0">false</option></Select></div>
-                <div className="flex items-end"><Button type="submit" className="px-3 py-2 text-xs">Ubah</Button></div>
+                <div className="flex items-end"><Button type="submit" className="px-3 py-2 text-xs" leftIcon={Pencil}>Ubah</Button></div>
               </form>
               <form className="mt-2" onSubmit={(e) => { e.preventDefault(); router.delete(`/superadmin/plans/${plan.id}/features/${feature.id}`) }}>
-                <Button variant="destructive" className="px-3 py-2 text-xs" type="submit">Hapus</Button>
+                <Button variant="destructive" className="px-3 py-2 text-xs" type="submit" leftIcon={Trash2}>Hapus</Button>
               </form>
             </div>
           ))}

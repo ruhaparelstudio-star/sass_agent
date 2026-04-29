@@ -92,4 +92,21 @@ class GroundingValidatorServiceTest extends TestCase
 
         $this->assertNull($reason);
     }
+
+    public function test_blocks_booking_link_when_calendar_not_grounded(): void
+    {
+        $validator = new GroundingValidatorService;
+
+        $reason = $validator->validate(
+            ['action' => 'send_booking_link'],
+            [
+                'grounding' => [
+                    'package' => ['is_grounded' => true],
+                    'calendar' => ['is_grounded' => false, 'reason' => 'calendar_provider_error'],
+                ],
+            ]
+        );
+
+        $this->assertSame('grounding_calendar_missing_source', $reason);
+    }
 }

@@ -1,6 +1,8 @@
 import React from 'react'
 import { Link } from '@inertiajs/react'
 import TenantLayout from '../../layouts/TenantLayout'
+import { Button } from '../../components/ui/button'
+import { MessagesSquare } from 'lucide-react'
 
 export default function Dashboard({ summary, recentConversations, recentHandoffs, recentNotifications }) {
   const cards = [
@@ -52,8 +54,8 @@ export default function Dashboard({ summary, recentConversations, recentHandoffs
       </section>
 
       <div className="mt-6">
-        <Link className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white" href="/tenant/inbox">
-          Open Conversation Inbox
+        <Link href="/tenant/inbox">
+          <Button leftIcon={MessagesSquare}>Open Conversation Inbox</Button>
         </Link>
       </div>
     </TenantLayout>

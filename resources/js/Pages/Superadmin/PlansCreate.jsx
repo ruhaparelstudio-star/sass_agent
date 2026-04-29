@@ -4,6 +4,7 @@ import SuperadminLayout from '../../layouts/SuperadminLayout'
 import { Card } from '../../components/ui/card'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
+import { Plus } from 'lucide-react'
 
 export default function PlansCreate({ errors = {} }) {
   const form = useForm({ name: '', slug: '', is_active: true })
@@ -26,7 +27,7 @@ export default function PlansCreate({ errors = {} }) {
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={form.data.is_active} onChange={(e) => form.setData('is_active', e.target.checked)} /> Aktif
           </label>
-          <Button type="submit" disabled={form.processing}>Buat</Button>
+          <Button type="submit" disabled={form.processing} leftIcon={Plus}>Buat</Button>
         </form>
       </Card>
     </SuperadminLayout>

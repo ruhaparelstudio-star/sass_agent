@@ -14,7 +14,7 @@ class PolicyValidatorService implements PolicyValidator
             return null;
         }
 
-        if (! in_array($action, ['send_file', 'send_booking_link'], true)) {
+        if (! in_array($action, ['send_file', 'send_booking_link', 'send_invoice'], true)) {
             return null;
         }
 
@@ -43,6 +43,11 @@ class PolicyValidatorService implements PolicyValidator
         $dormantError = $this->validateDormantPolicy($policy);
         if ($dormantError !== null) {
             return $dormantError;
+        }
+
+        $invoiceCapError = $this->validateInvoiceCapPolicy($action, $policy);
+        if ($invoiceCapError !== null) {
+            return $invoiceCapError;
         }
 
         return null;
@@ -135,6 +140,36 @@ class PolicyValidatorService implements PolicyValidator
 
         if (($dormant['allowed'] ?? false) !== true) {
             return 'policy_dormant_blocked';
+        }
+
+        return null;
+    }
+
+    private function validateInvoiceCapPolicy(string $action, array $policy): ?string
+    {
+        if ($action !== 'send_invoice') {
+            return null;
+        }
+
+        $invoice = $policy['invoice'] ?? null;
+        if (! is_array($invoice)) {
+            return null;
+        }
+
+        $enabled = ($invoice['max_count_enabled'] ?? false) === true;
+        if (! $enabled) {
+            return null;
+        }
+
+        $maxCount = $invoice['max_count'] ?? null;
+        $sentCount = $invoice['sent_count'] ?? null;
+
+        if (! is_int($maxCount) || ! is_int($sentCount)) {
+            return 'policy_invoice_cap_missing';
+        }
+
+        if ($sentCount >= $maxCount) {
+            return 'policy_invoice_cap_exceeded';
         }
 
         return null;

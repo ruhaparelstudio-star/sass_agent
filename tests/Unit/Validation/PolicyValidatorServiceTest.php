@@ -171,5 +171,24 @@ class PolicyValidatorServiceTest extends TestCase
 
         $this->assertNull($reason);
     }
-}
 
+    public function test_blocks_send_invoice_when_invoice_cap_is_exceeded(): void
+    {
+        $validator = new PolicyValidatorService;
+
+        $reason = $validator->validate(
+            ['action' => 'send_invoice'],
+            [
+                'policy' => [
+                    'invoice' => [
+                        'max_count_enabled' => true,
+                        'max_count' => 3,
+                        'sent_count' => 3,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame('policy_invoice_cap_exceeded', $reason);
+    }
+}

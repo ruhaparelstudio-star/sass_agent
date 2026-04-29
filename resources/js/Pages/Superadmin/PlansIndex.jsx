@@ -6,6 +6,7 @@ import { Button } from '../../components/ui/button'
 import { Select } from '../../components/ui/select'
 import { Input } from '../../components/ui/input'
 import { Badge } from '../../components/ui/badge'
+import { Plus, Link2, Unlink } from 'lucide-react'
 
 export default function PlansIndex({ plans, tenants, subscriptionStatuses }) {
   const { flash, errors } = usePage().props
@@ -32,7 +33,7 @@ export default function PlansIndex({ plans, tenants, subscriptionStatuses }) {
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">Plan Catalog</h2>
             <p className="mt-1 text-xs text-slate-500">Kelola daftar paket dan fitur sebagai data terstruktur untuk keputusan sistem yang tervalidasi.</p>
           </div>
-          <Link href="/superadmin/plans/create"><Button>Buat Paket</Button></Link>
+          <Link href="/superadmin/plans/create"><Button leftIcon={Plus}>Buat Paket</Button></Link>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
@@ -85,7 +86,7 @@ export default function PlansIndex({ plans, tenants, subscriptionStatuses }) {
             </div>
             <div><label className="mb-1 block text-xs font-medium">Starts At</label><Input type="datetime-local" value={assignForm.data.starts_at} onChange={(e) => assignForm.setData('starts_at', e.target.value)} />{errors?.starts_at ? <p className="mt-1 text-xs text-red-600">{errors.starts_at}</p> : null}</div>
             <div><label className="mb-1 block text-xs font-medium">Ends At</label><Input type="datetime-local" value={assignForm.data.ends_at} onChange={(e) => assignForm.setData('ends_at', e.target.value)} />{errors?.ends_at ? <p className="mt-1 text-xs text-red-600">{errors.ends_at}</p> : null}</div>
-            <Button type="submit" disabled={assignForm.processing}>Tetapkan Langganan</Button>
+            <Button type="submit" disabled={assignForm.processing} leftIcon={Link2}>Tetapkan Langganan</Button>
           </form>
         </Card>
 
@@ -104,7 +105,9 @@ export default function PlansIndex({ plans, tenants, subscriptionStatuses }) {
                     <td className="py-2 text-slate-600 text-xs">{tenant.current_subscription ? `${tenant.current_subscription.starts_at ?? '-'} -> ${tenant.current_subscription.ends_at ?? '-'}` : '-'}</td>
                     <td className="py-2">
                       {tenant.current_subscription ? (
-                        <Button variant="destructive" className="px-3 py-1 text-xs" type="button" onClick={() => router.post('/superadmin/subscriptions/unassign', { tenant_id: tenant.id })}>Lepas</Button>
+                        <Button variant="destructive" className="px-3 py-1 text-xs" type="button" leftIcon={Unlink} onClick={() => router.post('/superadmin/subscriptions/unassign', { tenant_id: tenant.id })}>
+                          Lepas
+                        </Button>
                       ) : <span className="text-slate-500">Belum berlangganan</span>}
                     </td>
                   </tr>

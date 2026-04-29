@@ -5,6 +5,7 @@ namespace Tests\Feature\Auth;
 use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
 
 class WebLoginTest extends TestCase
@@ -15,8 +16,7 @@ class WebLoginTest extends TestCase
     {
         $this->get('/login')
             ->assertOk()
-            ->assertSeeText('Admin Login')
-            ->assertSeeText('SaaS Agent Console');
+            ->assertInertia(fn (Assert $page) => $page->component('Auth/Login', false));
     }
 
     public function test_tenant_admin_can_login_via_web_session(): void
@@ -88,6 +88,10 @@ class WebLoginTest extends TestCase
         ]);
 
         $response->assertRedirect('/login');
-        $this->followRedirects($response)->assertSeeText('Email atau password salah.');
+        $this->followRedirects($response)
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Auth/Login', false)
+                ->where('flash.login_error', 'Email atau password salah.')
+            );
     }
 }

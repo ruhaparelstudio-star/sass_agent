@@ -4,16 +4,17 @@ namespace App\Modules\Auth\Http\Controllers;
 
 use App\Enums\UserRole;
 use App\Http\Controllers\Controller;
-use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Inertia\Inertia;
+use Inertia\Response;
 
 class WebLoginController extends Controller
 {
-    public function show(): View
+    public function show(): Response
     {
-        return view('auth.login');
+        return Inertia::render('Auth/Login');
     }
 
     public function login(Request $request): RedirectResponse

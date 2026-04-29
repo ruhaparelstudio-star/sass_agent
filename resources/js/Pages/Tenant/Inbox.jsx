@@ -1,6 +1,8 @@
 import React from 'react'
 import { Link, router } from '@inertiajs/react'
 import TenantLayout from '../../layouts/TenantLayout'
+import { Button } from '../../components/ui/button'
+import { CheckCircle2, Bot } from 'lucide-react'
 
 export default function Inbox({ query, conversationList, selectedConversation, messages, handoffs, contextPanel }) {
   return (
@@ -40,22 +42,25 @@ export default function Inbox({ query, conversationList, selectedConversation, m
                   <div>Status: {row.status}</div>
                   <div className="mt-2 flex gap-2">
                     {row.can_resolve_handoff && (
-                      <button
+                      <Button
                         type="button"
-                        className="rounded bg-amber-600 px-2 py-1 text-xs text-white"
+                        className="px-3 py-1 text-xs"
+                        variant="secondary"
+                        leftIcon={CheckCircle2}
                         onClick={() => router.post(`/tenant/inbox/${row.conversation_id}/handoff/${row.id}/resolve`)}
                       >
                         Resolve
-                      </button>
+                      </Button>
                     )}
                     {row.can_resume_ai && (
-                      <button
+                      <Button
                         type="button"
-                        className="rounded bg-emerald-600 px-2 py-1 text-xs text-white"
+                        className="px-3 py-1 text-xs"
+                        leftIcon={Bot}
                         onClick={() => router.post(`/tenant/inbox/${row.conversation_id}/handoff/${row.id}/resume`)}
                       >
                         Resume AI
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </li>
