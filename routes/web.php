@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\UserRole;
 use App\Modules\AdminUi\Http\Controllers\SuperadminPlanManagementController;
 use App\Modules\AdminUi\Http\Controllers\SuperadminConversationMonitoringController;
 use App\Modules\AdminUi\Http\Controllers\SuperadminDataMonitoringController;
@@ -10,12 +11,23 @@ use App\Modules\AdminUi\Http\Controllers\TenantWhatsappQrController;
 use App\Modules\Activation\Http\Controllers\ActivationController;
 use App\Modules\AdminUi\Http\Controllers\SuperadminTenantController;
 use App\Modules\Auth\Http\Controllers\WebLoginController;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
-    return view('welcome');
+    $user = Auth::user();
+
+    if ($user === null) {
+        return redirect('/login');
+    }
+
+    if ($user->role === UserRole::Superadmin) {
+        return redirect('/superadmin/dashboard');
+    }
+
+    return redirect('/tenant/dashboard');
 });
 
 Route::middleware('guest')->group(function (): void {
@@ -55,6 +67,7 @@ Route::middleware('auth')->group(function (): void {
     Route::get('/tenant/dashboard', [TenantDashboardController::class, 'show']);
     Route::get('/tenant/inbox', [TenantConversationInboxController::class, 'show']);
     Route::get('/tenant/whatsapp/qr', [TenantWhatsappQrController::class, 'show']);
+    Route::get('/tenant/whatsapp/qr/image', [TenantWhatsappQrController::class, 'image']);
     Route::post('/tenant/inbox/{conversation}/handoff/{handoff}/resolve', [TenantConversationInboxController::class, 'resolveHandoff']);
     Route::post('/tenant/inbox/{conversation}/handoff/{handoff}/resume', [TenantConversationInboxController::class, 'resumeAi']);
 

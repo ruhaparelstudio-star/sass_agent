@@ -7,6 +7,7 @@ import { RefreshCw, QrCode, WifiOff } from 'lucide-react'
 
 export default function WhatsappQr({ tenantId, qr }) {
   const isAvailable = qr?.status === 'available'
+  const qrImageUrl = isAvailable ? `/tenant/whatsapp/qr/image?t=${encodeURIComponent(qr?.generatedAt ?? Date.now())}` : null
 
   return (
     <TenantLayout title="WhatsApp QR Scan">
@@ -29,6 +30,13 @@ export default function WhatsappQr({ tenantId, qr }) {
             </div>
             <div className="rounded-lg border border-emerald-200 bg-white p-3">
               <p className="text-xs text-slate-500">Kode QR payload</p>
+              {qrImageUrl ? (
+                <img
+                  src={qrImageUrl}
+                  alt="WhatsApp QR"
+                  className="mt-3 h-56 w-56 rounded-md border border-slate-200 bg-white object-contain"
+                />
+              ) : null}
               <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-all text-xs text-slate-800">{qr.code}</pre>
             </div>
             <div className="mt-3 text-xs text-slate-600">
@@ -50,4 +58,3 @@ export default function WhatsappQr({ tenantId, qr }) {
     </TenantLayout>
   )
 }
-

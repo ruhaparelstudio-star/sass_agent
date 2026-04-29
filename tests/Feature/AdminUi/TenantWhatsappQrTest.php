@@ -14,7 +14,7 @@ class TenantWhatsappQrTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_authorized_tenant_admin_can_access_whatsapp_qr_page(): void
+    public function test_qr_page_marks_dummy_payload_as_unavailable(): void
     {
         [$tenant, $tenantAdmin] = $this->createTenantAdmin('tenant-one');
 
@@ -36,9 +36,37 @@ class TenantWhatsappQrTest extends TestCase
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Tenant/WhatsappQr', false)
                 ->where('tenantId', $tenant->id)
+                ->where('qr.status', 'unavailable')
+                ->where('qr.provider', null)
+                ->where('qr.code', null)
+            );
+    }
+
+    public function test_qr_page_marks_real_payload_as_available(): void
+    {
+        [$tenant, $tenantAdmin] = $this->createTenantAdmin('tenant-one');
+
+        Config::set('whatsapp.gateway_qr_url', 'http://wa-gateway:3001/qr');
+        Http::fake([
+            'http://wa-gateway:3001/qr*' => Http::response([
+                'tenant_id' => $tenant->id,
+                'provider' => 'meta',
+                'qr_code' => 'REAL-QR-PAYLOAD-123',
+                'expires_in_seconds' => 60,
+                'generated_at' => '2026-04-29T12:00:00Z',
+            ], 200),
+        ]);
+
+        $response = $this->actingAs($tenantAdmin)->get('/tenant/whatsapp/qr');
+
+        $response
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Tenant/WhatsappQr', false)
+                ->where('tenantId', $tenant->id)
                 ->where('qr.status', 'available')
                 ->where('qr.provider', 'meta')
-                ->where('qr.code', 'dummy-wa-qr-v1')
+                ->where('qr.code', 'REAL-QR-PAYLOAD-123')
                 ->where('qr.expiresInSeconds', 60)
             );
     }
@@ -91,4 +119,3 @@ class TenantWhatsappQrTest extends TestCase
         return [$tenant, $tenantAdmin];
     }
 }
-

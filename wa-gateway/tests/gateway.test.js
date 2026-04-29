@@ -36,7 +36,7 @@ test('GET /health returns 200 and expected shape', async () => {
   }
 });
 
-test('GET /qr returns 200 and deterministic dummy contract', async () => {
+test('GET /qr returns unavailable when no QR exists for tenant', async () => {
   const app = createApp({
     callbackClient: {
       sendStatus: async () => ({}),
@@ -49,10 +49,45 @@ test('GET /qr returns 200 and deterministic dummy contract', async () => {
     const response = await fetch(`http://127.0.0.1:${address.port}/qr?tenant_id=7`);
     const body = await response.json();
 
+    assert.equal(response.status, 404);
+    assert.equal(body.status, 'unavailable');
+  } finally {
+    await stopServer(server);
+  }
+});
+
+test('GET /qr returns available QR after status callback with pending session', async () => {
+  const app = createApp({
+    callbackClient: {
+      sendStatus: async () => ({}),
+    },
+  });
+  const server = await startServer(app);
+
+  try {
+    const address = server.address();
+    await fetch(`http://127.0.0.1:${address.port}/callbacks/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tenant_id: 7,
+        provider: 'meta',
+        account_provider_ref: 'acct-001',
+        account_status: 'connecting',
+        account_payload: { event: 'account.connecting' },
+        session_provider_ref: 'sess-001',
+        session_status: 'pending',
+        session_payload: { qr_code: 'REAL-QR-PAYLOAD-123' },
+      }),
+    });
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/qr?tenant_id=7`);
+    const body = await response.json();
+
     assert.equal(response.status, 200);
     assert.equal(body.tenant_id, 7);
     assert.equal(body.provider, 'meta');
-    assert.equal(body.qr_code, 'dummy-wa-qr-v1');
+    assert.equal(body.qr_code, 'REAL-QR-PAYLOAD-123');
     assert.equal(body.expires_in_seconds, 60);
     assert.ok(typeof body.generated_at === 'string');
   } finally {
