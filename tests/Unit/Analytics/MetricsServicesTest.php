@@ -181,6 +181,56 @@ class MetricsServicesTest extends TestCase
         $this->assertSame(30, $summary['token_usage_total']);
     }
 
+    public function test_metrics_query_ignores_non_numeric_token_usage_values(): void
+    {
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+
+        $conversation = Conversation::query()->create([
+            'tenant_id' => $tenant->id,
+            'customer_phone' => '+621111',
+            'status' => 'open',
+        ]);
+
+        ActionLog::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'action' => 'send_booking_link',
+            'status' => 'executed',
+            'reason' => null,
+            'payload' => null,
+            'result' => ['token_usage_total' => 'not-a-number'],
+        ]);
+        ActionLog::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'action' => 'send_booking_link',
+            'status' => 'executed',
+            'reason' => null,
+            'payload' => null,
+            'result' => ['token_usage_total' => null],
+        ]);
+        ActionLog::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'action' => 'send_booking_link',
+            'status' => 'executed',
+            'reason' => null,
+            'payload' => null,
+            'result' => ['token_usage_total' => '21'],
+        ]);
+
+        $tenantSummary = app(TenantMetricsQueryService::class)->getSummary($tenant->id);
+        $superadminSummary = app(SuperadminMetricsQueryService::class)->getSummary();
+
+        $this->assertSame(3, $tenantSummary['booking_action_count']);
+        $this->assertSame(21, $tenantSummary['token_usage_total']);
+        $this->assertSame(21, $superadminSummary['token_usage_total']);
+    }
+
     public function test_metrics_snapshot_writer_persists_metric_rows(): void
     {
         $tenant = Tenant::query()->create([

@@ -228,6 +228,11 @@ class SuperadminTenantManagementTest extends TestCase
         $this->actingAs($superadmin)->get('/superadmin/dashboard')
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
+                ->has('summary')
+                ->has('recentTenants')
+                ->where('summary.tenants_total', 2)
+                ->where('summary.tenants_active', 1)
+                ->where('summary.tenants_inactive', 1)
                 ->where('summary.lead_count', 2)
                 ->where('summary.handoff_count', 2)
                 ->where('summary.booking_action_count', 2)
