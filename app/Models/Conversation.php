@@ -39,4 +39,9 @@ class Conversation extends Model
     {
         return $this->hasMany(ConversationContext::class);
     }
+
+    public function invoices(): HasMany
+    {
+        return $this->hasMany(Invoice::class);
+    }
 }

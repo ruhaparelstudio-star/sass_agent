@@ -120,4 +120,14 @@ class Tenant extends Model
     {
         return $this->hasMany(CalendarAvailabilityCheck::class);
     }
+
+    public function invoices(): HasMany
+    {
+        return $this->hasMany(Invoice::class);
+    }
+
+    public function invoiceSendLogs(): HasMany
+    {
+        return $this->hasMany(InvoiceSendLog::class);
+    }
 }

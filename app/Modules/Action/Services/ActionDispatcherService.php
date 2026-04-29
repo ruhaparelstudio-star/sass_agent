@@ -7,6 +7,8 @@ use App\Models\BookingSetting;
 use App\Models\Conversation;
 use App\Models\ConversationState;
 use App\Models\Handoff;
+use App\Models\Invoice;
+use App\Models\InvoiceSendLog;
 use App\Models\Notification;
 use App\Models\Tenant;
 use App\Models\TenantAsset;
@@ -64,6 +66,7 @@ class ActionDispatcherService
             'send_text' => $this->dispatchSendText($tenant, $candidate),
             'send_file' => $this->dispatchSendFile($tenant, $candidate),
             'send_booking_link' => $this->dispatchSendBookingLink($tenant, $candidate),
+            'send_invoice' => $this->dispatchSendInvoice($tenant, $conversation, $candidate),
             'handoff_to_human' => $this->dispatchHandoffToHuman($tenant, $conversation, $candidate),
             'reply_safe_text' => [
                 'status' => 'executed',
@@ -343,6 +346,158 @@ class ActionDispatcherService
      * @param  array<string,mixed>  $candidate
      * @return array{status:string,reason:?string,meta:array<string,mixed>}
      */
+    private function dispatchSendInvoice(Tenant $tenant, Conversation $conversation, array $candidate): array
+    {
+        $sendInvoice = $candidate['meta']['send_invoice'] ?? null;
+        if (! is_array($sendInvoice) || ! $this->hasValidSendInvoiceContract($sendInvoice)) {
+            return [
+                'status' => 'blocked',
+                'reason' => 'invalid_send_invoice_contract',
+                'meta' => ['executed' => false],
+            ];
+        }
+
+        $invoice = Invoice::query()
+            ->where('id', (int) $sendInvoice['invoice_id'])
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->first();
+
+        if (! $invoice) {
+            return [
+                'status' => 'blocked',
+                'reason' => 'send_invoice_invoice_not_owned',
+                'meta' => ['executed' => false],
+            ];
+        }
+
+        $asset = TenantAsset::query()
+            ->where('id', (int) $sendInvoice['tenant_asset_id'])
+            ->where('tenant_id', $tenant->id)
+            ->first();
+
+        if (! $asset) {
+            return [
+                'status' => 'blocked',
+                'reason' => 'send_invoice_asset_not_owned',
+                'meta' => ['executed' => false],
+            ];
+        }
+
+        $maxSendCount = $sendInvoice['max_send_count'] ?? null;
+        if (is_int($maxSendCount) && $maxSendCount > 0) {
+            $sentCount = InvoiceSendLog::query()
+                ->where('tenant_id', $tenant->id)
+                ->where('invoice_id', $invoice->id)
+                ->where('status', 'sent')
+                ->count();
+
+            if ($sentCount >= $maxSendCount) {
+                return [
+                    'status' => 'blocked',
+                    'reason' => 'send_invoice_max_count_exceeded',
+                    'meta' => ['executed' => false],
+                ];
+            }
+        }
+
+        $payload = [
+            'file' => [
+                'tenant_asset_id' => $asset->id,
+                'storage_disk' => $asset->storage_disk,
+                'storage_path' => $asset->storage_path,
+                'filename' => $sendInvoice['file_name'],
+                'mime_type' => $sendInvoice['mime_type'],
+            ],
+            'caption' => $sendInvoice['caption'] ?? null,
+        ];
+
+        try {
+            return DB::transaction(function () use ($tenant, $conversation, $invoice, $asset, $sendInvoice, $payload): array {
+                $outbound = $this->waOutboundService->queueOutboundMessage($tenant, [
+                    'provider' => $sendInvoice['provider'],
+                    'wa_account_provider_ref' => $sendInvoice['wa_account_provider_ref'],
+                    'wa_session_provider_ref' => $sendInvoice['wa_session_provider_ref'] ?? null,
+                    'provider_message_id' => $sendInvoice['provider_message_id'] ?? null,
+                    'to' => $sendInvoice['to'],
+                    'message_type' => 'file',
+                    'payload' => $payload,
+                    'meta' => is_array($sendInvoice['meta'] ?? null) ? $sendInvoice['meta'] : null,
+                ]);
+
+                $sendLog = InvoiceSendLog::query()->create([
+                    'tenant_id' => $tenant->id,
+                    'conversation_id' => $conversation->id,
+                    'invoice_id' => $invoice->id,
+                    'tenant_asset_id' => $asset->id,
+                    'wa_outbound_message_id' => $outbound->id,
+                    'status' => 'sent',
+                    'failure_reason' => null,
+                    'sent_at' => now(),
+                    'meta' => is_array($sendInvoice['meta'] ?? null) ? $sendInvoice['meta'] : null,
+                ]);
+
+                $invoice->last_sent_at = now();
+                $invoice->save();
+
+                ConversationState::query()
+                    ->where('tenant_id', $tenant->id)
+                    ->where('conversation_id', $conversation->id)
+                    ->update(['agent_mode' => 'limited']);
+
+                return [
+                    'status' => 'executed',
+                    'reason' => null,
+                    'meta' => [
+                        'executed' => true,
+                        'wa_outbound_message_id' => $outbound->id,
+                        'invoice_send_log_id' => $sendLog->id,
+                    ],
+                ];
+            });
+        } catch (\Throwable) {
+            InvoiceSendLog::query()->create([
+                'tenant_id' => $tenant->id,
+                'conversation_id' => $conversation->id,
+                'invoice_id' => $invoice->id,
+                'tenant_asset_id' => $asset->id,
+                'wa_outbound_message_id' => null,
+                'status' => 'failed',
+                'failure_reason' => 'send_invoice_dispatch_failed',
+                'sent_at' => null,
+                'meta' => is_array($sendInvoice['meta'] ?? null) ? $sendInvoice['meta'] : null,
+            ]);
+
+            return [
+                'status' => 'blocked',
+                'reason' => 'send_invoice_dispatch_failed',
+                'meta' => ['executed' => false],
+            ];
+        }
+    }
+
+    /**
+     * @param  array<string,mixed>  $sendInvoice
+     */
+    private function hasValidSendInvoiceContract(array $sendInvoice): bool
+    {
+        return $this->isNonEmptyString($sendInvoice['provider'] ?? null)
+            && $this->isNonEmptyString($sendInvoice['wa_account_provider_ref'] ?? null)
+            && $this->isNonEmptyString($sendInvoice['to'] ?? null)
+            && $this->isPositiveInt($sendInvoice['invoice_id'] ?? null)
+            && $this->isPositiveInt($sendInvoice['tenant_asset_id'] ?? null)
+            && $this->isNonEmptyString($sendInvoice['file_name'] ?? null)
+            && $this->isNonEmptyString($sendInvoice['mime_type'] ?? null)
+            && $this->isOptionalNonEmptyString($sendInvoice['caption'] ?? null)
+            && $this->isOptionalNonEmptyString($sendInvoice['wa_session_provider_ref'] ?? null)
+            && $this->isOptionalNonEmptyString($sendInvoice['provider_message_id'] ?? null)
+            && $this->isOptionalPositiveInt($sendInvoice['max_send_count'] ?? null);
+    }
+
+    /**
+     * @param  array<string,mixed>  $candidate
+     * @return array{status:string,reason:?string,meta:array<string,mixed>}
+     */
     private function dispatchHandoffToHuman(Tenant $tenant, Conversation $conversation, array $candidate): array
     {
         $handoffPayload = $candidate['meta']['handoff_to_human'] ?? null;
@@ -468,5 +623,14 @@ class ActionDispatcherService
         }
 
         return is_array($value);
+    }
+
+    private function isOptionalPositiveInt(mixed $value): bool
+    {
+        if ($value === null) {
+            return true;
+        }
+
+        return $this->isPositiveInt($value);
     }
 }

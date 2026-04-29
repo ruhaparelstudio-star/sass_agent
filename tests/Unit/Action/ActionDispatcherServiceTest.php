@@ -7,6 +7,7 @@ use App\Models\BookingSetting;
 use App\Models\Conversation;
 use App\Models\ConversationState;
 use App\Models\Handoff;
+use App\Models\Invoice;
 use App\Models\LeadProfile;
 use App\Models\Notification;
 use App\Models\Tenant;
@@ -665,6 +666,242 @@ class ActionDispatcherServiceTest extends TestCase
         Queue::assertNothingPushed();
     }
 
+    public function test_allowed_send_invoice_executes_logs_attempt_and_sets_limited_mode(): void
+    {
+        Queue::fake();
+        [$tenant, $conversation] = $this->createConversation();
+        $account = $this->createWaAccount($tenant);
+        $asset = $this->createInvoiceAsset($tenant);
+        $invoice = $this->createInvoice($tenant, $conversation, $asset);
+
+        $result = app(ActionDispatcherService::class)->dispatch(
+            $tenant,
+            $conversation,
+            [
+                'action' => 'send_invoice',
+                'reasons' => [],
+                'meta' => [
+                    'send_invoice' => [
+                        'provider' => 'meta',
+                        'wa_account_provider_ref' => $account->provider_ref,
+                        'to' => '+6281222333444',
+                        'invoice_id' => $invoice->id,
+                        'tenant_asset_id' => $asset->id,
+                        'file_name' => 'invoice-april.pdf',
+                        'mime_type' => 'application/pdf',
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame('executed', $result['status']);
+        $this->assertSame('send_invoice', $result['action']);
+        $this->assertNull($result['reason']);
+        $this->assertTrue($result['meta']['executed']);
+        $this->assertArrayHasKey('wa_outbound_message_id', $result['meta']);
+        $this->assertArrayHasKey('invoice_send_log_id', $result['meta']);
+
+        $this->assertDatabaseHas('invoice_send_logs', [
+            'id' => $result['meta']['invoice_send_log_id'],
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'invoice_id' => $invoice->id,
+            'status' => 'sent',
+            'failure_reason' => null,
+        ]);
+        $this->assertDatabaseHas('conversation_states', [
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'agent_mode' => 'limited',
+        ]);
+        $this->assertDatabaseHas('action_logs', [
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'action' => 'send_invoice',
+            'status' => 'executed',
+            'reason' => null,
+        ]);
+
+        Queue::assertPushed(DispatchWaOutboundMessageJob::class);
+    }
+
+    public function test_invalid_send_invoice_contract_is_blocked_and_logged(): void
+    {
+        Queue::fake();
+        [$tenant, $conversation] = $this->createConversation();
+        $this->createWaAccount($tenant);
+
+        $result = app(ActionDispatcherService::class)->dispatch(
+            $tenant,
+            $conversation,
+            [
+                'action' => 'send_invoice',
+                'reasons' => [],
+                'meta' => [
+                    'send_invoice' => [
+                        'provider' => 'meta',
+                        'wa_account_provider_ref' => 'acct-001',
+                        'to' => '+6281222333444',
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame('blocked', $result['status']);
+        $this->assertSame('invalid_send_invoice_contract', $result['reason']);
+        $this->assertDatabaseCount('invoice_send_logs', 0);
+        $this->assertDatabaseHas('action_logs', [
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'action' => 'send_invoice',
+            'status' => 'blocked',
+            'reason' => 'invalid_send_invoice_contract',
+        ]);
+
+        Queue::assertNothingPushed();
+    }
+
+    public function test_send_invoice_resend_is_blocked_when_max_count_is_reached(): void
+    {
+        Queue::fake();
+        [$tenant, $conversation] = $this->createConversation();
+        $account = $this->createWaAccount($tenant);
+        $asset = $this->createInvoiceAsset($tenant);
+        $invoice = $this->createInvoice($tenant, $conversation, $asset);
+
+        $this->assertSame('executed', app(ActionDispatcherService::class)->dispatch(
+            $tenant,
+            $conversation,
+            [
+                'action' => 'send_invoice',
+                'reasons' => [],
+                'meta' => [
+                    'send_invoice' => [
+                        'provider' => 'meta',
+                        'wa_account_provider_ref' => $account->provider_ref,
+                        'to' => '+6281222333444',
+                        'invoice_id' => $invoice->id,
+                        'tenant_asset_id' => $asset->id,
+                        'file_name' => 'invoice-april.pdf',
+                        'mime_type' => 'application/pdf',
+                        'max_send_count' => 1,
+                    ],
+                ],
+            ]
+        )['status']);
+
+        $second = app(ActionDispatcherService::class)->dispatch(
+            $tenant,
+            $conversation,
+            [
+                'action' => 'send_invoice',
+                'reasons' => [],
+                'meta' => [
+                    'send_invoice' => [
+                        'provider' => 'meta',
+                        'wa_account_provider_ref' => $account->provider_ref,
+                        'to' => '+6281222333444',
+                        'invoice_id' => $invoice->id,
+                        'tenant_asset_id' => $asset->id,
+                        'file_name' => 'invoice-april.pdf',
+                        'mime_type' => 'application/pdf',
+                        'max_send_count' => 1,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame('blocked', $second['status']);
+        $this->assertSame('send_invoice_max_count_exceeded', $second['reason']);
+        $this->assertDatabaseCount('invoice_send_logs', 1);
+    }
+
+    public function test_send_invoice_blocks_when_invoice_or_asset_not_owned_by_tenant(): void
+    {
+        Queue::fake();
+        [$tenantA, $conversationA] = $this->createConversation('tenant-a');
+        [$tenantB, $conversationB] = $this->createConversation('tenant-b');
+        $accountA = $this->createWaAccount($tenantA, 'acct-tenant-a');
+        $assetB = $this->createInvoiceAsset($tenantB);
+        $invoiceB = $this->createInvoice($tenantB, $conversationB, $assetB);
+
+        $result = app(ActionDispatcherService::class)->dispatch(
+            $tenantA,
+            $conversationA,
+            [
+                'action' => 'send_invoice',
+                'reasons' => [],
+                'meta' => [
+                    'send_invoice' => [
+                        'provider' => 'meta',
+                        'wa_account_provider_ref' => $accountA->provider_ref,
+                        'to' => '+6281222333444',
+                        'invoice_id' => $invoiceB->id,
+                        'tenant_asset_id' => $assetB->id,
+                        'file_name' => 'invoice-foreign.pdf',
+                        'mime_type' => 'application/pdf',
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame('blocked', $result['status']);
+        $this->assertSame('send_invoice_invoice_not_owned', $result['reason']);
+        $this->assertDatabaseCount('invoice_send_logs', 0);
+        $this->assertDatabaseHas('action_logs', [
+            'tenant_id' => $tenantA->id,
+            'conversation_id' => $conversationA->id,
+            'action' => 'send_invoice',
+            'status' => 'blocked',
+            'reason' => 'send_invoice_invoice_not_owned',
+        ]);
+        Queue::assertNothingPushed();
+    }
+
+    public function test_send_invoice_dispatch_failure_is_blocked_and_persists_failed_send_log(): void
+    {
+        Queue::fake();
+        [$tenant, $conversation] = $this->createConversation();
+        $asset = $this->createInvoiceAsset($tenant);
+        $invoice = $this->createInvoice($tenant, $conversation, $asset);
+
+        $result = app(ActionDispatcherService::class)->dispatch(
+            $tenant,
+            $conversation,
+            [
+                'action' => 'send_invoice',
+                'reasons' => [],
+                'meta' => [
+                    'send_invoice' => [
+                        'provider' => 'meta',
+                        'wa_account_provider_ref' => 'missing-acct',
+                        'to' => '+6281222333444',
+                        'invoice_id' => $invoice->id,
+                        'tenant_asset_id' => $asset->id,
+                        'file_name' => 'invoice-april.pdf',
+                        'mime_type' => 'application/pdf',
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame('blocked', $result['status']);
+        $this->assertSame('send_invoice_dispatch_failed', $result['reason']);
+        $this->assertDatabaseHas('invoice_send_logs', [
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'invoice_id' => $invoice->id,
+            'status' => 'failed',
+            'failure_reason' => 'send_invoice_dispatch_failed',
+        ]);
+        $this->assertDatabaseHas('conversation_states', [
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'agent_mode' => 'assistant',
+        ]);
+        Queue::assertNothingPushed();
+    }
+
     public function test_allowed_handoff_to_human_executes_persists_and_queues_notification(): void
     {
         Queue::fake();
@@ -921,6 +1158,35 @@ class ActionDispatcherServiceTest extends TestCase
             'is_active' => true,
             'active_from' => $activeFrom ?? now()->subDay(),
             'active_until' => $activeUntil ?? now()->addDay(),
+        ]);
+    }
+
+    private function createInvoiceAsset(Tenant $tenant): TenantAsset
+    {
+        return TenantAsset::query()->create([
+            'tenant_id' => $tenant->id,
+            'asset_type' => 'invoice',
+            'display_name' => 'Invoice April',
+            'original_filename' => 'invoice-april.pdf',
+            'storage_disk' => 'local',
+            'storage_path' => 'tenant-assets/invoice/'.$tenant->id.'/invoice-april.pdf',
+            'uploaded_by_user_id' => null,
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+    }
+
+    private function createInvoice(Tenant $tenant, Conversation $conversation, TenantAsset $asset): Invoice
+    {
+        return Invoice::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'tenant_asset_id' => $asset->id,
+            'customer_phone' => $conversation->customer_phone,
+            'status' => 'ready',
+            'issued_at' => now(),
         ]);
     }
 }

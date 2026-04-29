@@ -2,6 +2,7 @@
 
 namespace App\Modules\Validation\Services;
 
+use App\Models\InvoiceSendLog;
 use App\Modules\Validation\Contracts\PolicyValidator;
 
 class PolicyValidatorService implements PolicyValidator
@@ -164,6 +165,10 @@ class PolicyValidatorService implements PolicyValidator
         $maxCount = $invoice['max_count'] ?? null;
         $sentCount = $invoice['sent_count'] ?? null;
 
+        if (! is_int($sentCount)) {
+            $sentCount = $this->resolveSentCountFromLogs($policy);
+        }
+
         if (! is_int($maxCount) || ! is_int($sentCount)) {
             return 'policy_invoice_cap_missing';
         }
@@ -173,5 +178,21 @@ class PolicyValidatorService implements PolicyValidator
         }
 
         return null;
+    }
+
+    private function resolveSentCountFromLogs(array $policy): ?int
+    {
+        $tenantId = $policy['invoice']['tenant_id'] ?? null;
+        $invoiceId = $policy['invoice']['invoice_id'] ?? null;
+
+        if (! is_int($tenantId) || ! is_int($invoiceId)) {
+            return null;
+        }
+
+        return InvoiceSendLog::query()
+            ->where('tenant_id', $tenantId)
+            ->where('invoice_id', $invoiceId)
+            ->where('status', 'sent')
+            ->count();
     }
 }
