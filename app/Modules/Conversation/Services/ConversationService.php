@@ -14,6 +14,7 @@ class ConversationService
 {
     public function __construct(
         private readonly LeadProfileService $leadProfileService,
+        private readonly ConversationSummaryService $conversationSummaryService,
     ) {}
 
     public function findOrCreateActiveConversation(Tenant $tenant, string $customerPhone): Conversation
@@ -67,13 +68,17 @@ class ConversationService
             throw new HttpException(422, 'Message content is required.');
         }
 
-        return Message::query()->create([
+        $message = Message::query()->create([
             'tenant_id' => $tenant->id,
             'conversation_id' => $conversation->id,
             'direction' => $direction,
             'content' => $normalizedContent,
             'meta' => $meta,
         ]);
+
+        $this->conversationSummaryService->queueIfEligible($tenant, $conversation);
+
+        return $message;
     }
 
     public function upsertState(Conversation $conversation, Tenant $tenant, array $attributes = []): ConversationState

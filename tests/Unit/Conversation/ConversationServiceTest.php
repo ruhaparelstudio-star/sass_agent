@@ -5,8 +5,10 @@ namespace Tests\Unit\Conversation;
 use App\Enums\MessageDirection;
 use App\Models\ConversationState;
 use App\Models\Tenant;
+use App\Jobs\GenerateConversationSummaryJob;
 use App\Modules\Conversation\Services\ConversationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\TestCase;
 
@@ -196,5 +198,64 @@ class ConversationServiceTest extends TestCase
             'conversation_id' => $conversation->id,
             'retention_policy' => 'strict_30d',
         ]);
+    }
+
+    public function test_store_message_dispatches_summary_job_when_message_count_reaches_twenty(): void
+    {
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+
+        $service = app(ConversationService::class);
+        $conversation = $service->findOrCreateActiveConversation($tenant, '+628177777777');
+
+        Queue::fake();
+
+        for ($i = 1; $i <= 19; $i++) {
+            $service->storeMessage(
+                $conversation,
+                $tenant,
+                MessageDirection::Inbound,
+                "Pesan ke-{$i}"
+            );
+        }
+
+        Queue::assertNothingPushed();
+
+        $service->storeMessage(
+            $conversation,
+            $tenant,
+            MessageDirection::Inbound,
+            'Pesan ke-20'
+        );
+
+        Queue::assertPushed(GenerateConversationSummaryJob::class, 1);
+    }
+
+    public function test_store_message_does_not_dispatch_summary_job_before_threshold(): void
+    {
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+
+        $service = app(ConversationService::class);
+        $conversation = $service->findOrCreateActiveConversation($tenant, '+628166666666');
+
+        Queue::fake();
+
+        for ($i = 1; $i <= 19; $i++) {
+            $service->storeMessage(
+                $conversation,
+                $tenant,
+                MessageDirection::Inbound,
+                "Pesan ke-{$i}"
+            );
+        }
+
+        Queue::assertNothingPushed();
     }
 }

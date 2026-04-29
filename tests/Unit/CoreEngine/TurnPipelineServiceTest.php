@@ -4,6 +4,7 @@ namespace Tests\Unit\CoreEngine;
 
 use App\Models\Conversation;
 use App\Models\ConversationState;
+use App\Models\ConversationSummary;
 use App\Models\LeadProfile;
 use App\Models\Tenant;
 use App\Modules\AiLayer\Contracts\LlmClientContract;
@@ -38,6 +39,33 @@ class TurnPipelineServiceTest extends TestCase
         $this->assertSame('send_file', $result['action_candidates']['blocked'][0]['action']);
         $this->assertSame(['missing_name'], $result['action_candidates']['blocked'][0]['reasons']);
         $this->assertStringContainsString('nama', mb_strtolower($result['response_plan']['message']));
+    }
+
+    public function test_pipeline_does_not_auto_load_conversation_summary_into_default_response(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        ConversationSummary::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'message_count' => 24,
+            'summary' => 'Dormant candidate summary should not be auto-loaded.',
+            'retention_until' => now()->addDays(7),
+            'summarized_at' => now(),
+        ]);
+
+        $this->bindLlmJson('{"intent":"ask_package","confidence":0.85,"entities":{}}');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'ada paket apa saja?',
+            'extract intent'
+        );
+
+        $this->assertIsArray($result['state_snapshot']);
+        $this->assertArrayNotHasKey('summary', $result['state_snapshot']);
+        $this->assertArrayNotHasKey('memory', $result);
     }
 
     public function test_booking_intent_with_missing_requirements_blocks_booking_candidate(): void
