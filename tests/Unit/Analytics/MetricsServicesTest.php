@@ -4,6 +4,7 @@ namespace Tests\Unit\Analytics;
 
 use App\Models\ActionLog;
 use App\Models\Conversation;
+use App\Models\DecisionTrace;
 use App\Models\Handoff;
 use App\Models\LeadProfile;
 use App\Models\Tenant;
@@ -77,7 +78,7 @@ class MetricsServicesTest extends TestCase
             'status' => 'executed',
             'reason' => null,
             'payload' => null,
-            'result' => ['token_usage_total' => 42],
+            'result' => [],
         ]);
         ActionLog::query()->create([
             'tenant_id' => $tenant->id,
@@ -86,7 +87,7 @@ class MetricsServicesTest extends TestCase
             'status' => 'blocked',
             'reason' => 'missing_name',
             'payload' => null,
-            'result' => ['token_usage_total' => 10],
+            'result' => [],
         ]);
         ActionLog::query()->create([
             'tenant_id' => $otherTenant->id,
@@ -95,7 +96,31 @@ class MetricsServicesTest extends TestCase
             'status' => 'executed',
             'reason' => null,
             'payload' => null,
-            'result' => ['token_usage_total' => 100],
+            'result' => [],
+        ]);
+        DecisionTrace::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'action_log_id' => null,
+            'trace_key' => 'action_dispatch',
+            'token_usage_total' => 42,
+            'meta' => null,
+        ]);
+        DecisionTrace::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'action_log_id' => null,
+            'trace_key' => 'action_dispatch',
+            'token_usage_total' => 10,
+            'meta' => null,
+        ]);
+        DecisionTrace::query()->create([
+            'tenant_id' => $otherTenant->id,
+            'conversation_id' => $otherConversation->id,
+            'action_log_id' => null,
+            'trace_key' => 'action_dispatch',
+            'token_usage_total' => 100,
+            'meta' => null,
         ]);
 
         $metrics = app(TenantMetricsQueryService::class)->getSummary($tenant->id);
@@ -161,7 +186,7 @@ class MetricsServicesTest extends TestCase
             'status' => 'executed',
             'reason' => null,
             'payload' => null,
-            'result' => ['token_usage_total' => 11],
+            'result' => [],
         ]);
         ActionLog::query()->create([
             'tenant_id' => $otherTenant->id,
@@ -170,7 +195,23 @@ class MetricsServicesTest extends TestCase
             'status' => 'executed',
             'reason' => null,
             'payload' => null,
-            'result' => ['token_usage_total' => 19],
+            'result' => [],
+        ]);
+        DecisionTrace::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversationOne->id,
+            'action_log_id' => null,
+            'trace_key' => 'action_dispatch',
+            'token_usage_total' => 11,
+            'meta' => null,
+        ]);
+        DecisionTrace::query()->create([
+            'tenant_id' => $otherTenant->id,
+            'conversation_id' => $conversationTwo->id,
+            'action_log_id' => null,
+            'trace_key' => 'action_dispatch',
+            'token_usage_total' => 19,
+            'meta' => null,
         ]);
 
         $summary = app(SuperadminMetricsQueryService::class)->getSummary();
@@ -181,7 +222,7 @@ class MetricsServicesTest extends TestCase
         $this->assertSame(30, $summary['token_usage_total']);
     }
 
-    public function test_metrics_query_ignores_non_numeric_token_usage_values(): void
+    public function test_metrics_query_uses_decision_traces_as_token_source(): void
     {
         $tenant = Tenant::query()->create([
             'name' => 'Tenant One',
@@ -221,6 +262,14 @@ class MetricsServicesTest extends TestCase
             'reason' => null,
             'payload' => null,
             'result' => ['token_usage_total' => '21'],
+        ]);
+        DecisionTrace::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'action_log_id' => null,
+            'trace_key' => 'action_dispatch',
+            'token_usage_total' => 21,
+            'meta' => null,
         ]);
 
         $tenantSummary = app(TenantMetricsQueryService::class)->getSummary($tenant->id);

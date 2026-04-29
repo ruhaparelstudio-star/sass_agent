@@ -6,6 +6,7 @@ use App\Models\ActionLog;
 use App\Models\BookingSetting;
 use App\Models\Conversation;
 use App\Models\ConversationState;
+use App\Models\DecisionTrace;
 use App\Models\Handoff;
 use App\Models\Invoice;
 use App\Models\InvoiceSendLog;
@@ -115,15 +116,31 @@ class ActionDispatcherService
             $meta['token_usage_total'] = (int) $tokenUsageFromCandidate;
         }
 
-        ActionLog::query()->create([
-            'tenant_id' => $tenant->id,
-            'conversation_id' => $conversation->id,
-            'action' => $action,
-            'status' => $status,
-            'reason' => $reason,
-            'payload' => $payload,
-            'result' => $meta,
-        ]);
+        DB::transaction(function () use ($tenant, $conversation, $action, $status, $reason, $payload, $meta) {
+            $createdActionLog = ActionLog::query()->create([
+                'tenant_id' => $tenant->id,
+                'conversation_id' => $conversation->id,
+                'action' => $action,
+                'status' => $status,
+                'reason' => $reason,
+                'payload' => $payload,
+                'result' => $meta,
+            ]);
+
+            DecisionTrace::query()->create([
+                'tenant_id' => $tenant->id,
+                'conversation_id' => $conversation->id,
+                'action_log_id' => $createdActionLog->id,
+                'trace_key' => 'action_dispatch',
+                'token_usage_total' => max(0, (int) ($meta['token_usage_total'] ?? 0)),
+                'meta' => [
+                    'action' => $action,
+                    'status' => $status,
+                    'reason' => $reason,
+                ],
+            ]);
+
+        });
 
         return [
             'status' => $status,

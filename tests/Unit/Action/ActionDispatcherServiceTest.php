@@ -151,6 +151,37 @@ class ActionDispatcherServiceTest extends TestCase
 
         $log = \App\Models\ActionLog::query()->latest('id')->firstOrFail();
         $this->assertSame(77, $log->result['token_usage_total'] ?? null);
+        $this->assertDatabaseHas('decision_traces', [
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'action_log_id' => $log->id,
+            'trace_key' => 'action_dispatch',
+            'token_usage_total' => 77,
+        ]);
+    }
+
+    public function test_missing_or_non_numeric_token_usage_total_is_stored_as_zero_in_decision_trace(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        app(ActionDispatcherService::class)->dispatch(
+            $tenant,
+            $conversation,
+            [
+                'action' => 'reply_safe_text',
+                'reasons' => [],
+                'meta' => [
+                    'token_usage_total' => 'invalid',
+                ],
+            ]
+        );
+
+        $this->assertDatabaseHas('decision_traces', [
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'trace_key' => 'action_dispatch',
+            'token_usage_total' => 0,
+        ]);
     }
 
     public function test_allowed_send_text_executes_queues_outbound_and_logs_result(): void

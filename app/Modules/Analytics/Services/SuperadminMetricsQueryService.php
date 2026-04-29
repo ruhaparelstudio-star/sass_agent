@@ -3,6 +3,7 @@
 namespace App\Modules\Analytics\Services;
 
 use App\Models\ActionLog;
+use App\Models\DecisionTrace;
 use App\Models\Handoff;
 use App\Models\LeadProfile;
 
@@ -18,15 +19,12 @@ class SuperadminMetricsQueryService
             ->get(['status', 'result']);
 
         $bookingActionCount = 0;
-        $tokenUsageTotal = 0;
+        $tokenUsageTotal = (int) DecisionTrace::query()->sum('token_usage_total');
 
         foreach ($actionLogs as $actionLog) {
             if ($actionLog->status === 'executed') {
                 $bookingActionCount++;
             }
-
-            $raw = $actionLog->result['token_usage_total'] ?? 0;
-            $tokenUsageTotal += is_numeric($raw) ? (int) $raw : 0;
         }
 
         return [

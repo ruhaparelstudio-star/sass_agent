@@ -3,6 +3,7 @@
 namespace Tests\Feature\AdminUi;
 
 use App\Models\Conversation;
+use App\Models\DecisionTrace;
 use App\Models\Handoff;
 use App\Models\LeadProfile;
 use App\Models\Notification;
@@ -183,7 +184,7 @@ class TenantDashboardTest extends TestCase
             'status' => 'executed',
             'reason' => null,
             'payload' => null,
-            'result' => ['token_usage_total' => 12],
+            'result' => [],
         ]);
         \App\Models\ActionLog::query()->create([
             'tenant_id' => $tenant->id,
@@ -192,7 +193,7 @@ class TenantDashboardTest extends TestCase
             'status' => 'blocked',
             'reason' => 'missing_name',
             'payload' => null,
-            'result' => ['token_usage_total' => 8],
+            'result' => [],
         ]);
         \App\Models\ActionLog::query()->create([
             'tenant_id' => $otherTenant->id,
@@ -201,7 +202,31 @@ class TenantDashboardTest extends TestCase
             'status' => 'executed',
             'reason' => null,
             'payload' => null,
-            'result' => ['token_usage_total' => 100],
+            'result' => [],
+        ]);
+        DecisionTrace::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'action_log_id' => null,
+            'trace_key' => 'action_dispatch',
+            'token_usage_total' => 12,
+            'meta' => null,
+        ]);
+        DecisionTrace::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'action_log_id' => null,
+            'trace_key' => 'action_dispatch',
+            'token_usage_total' => 8,
+            'meta' => null,
+        ]);
+        DecisionTrace::query()->create([
+            'tenant_id' => $otherTenant->id,
+            'conversation_id' => $otherConversation->id,
+            'action_log_id' => null,
+            'trace_key' => 'action_dispatch',
+            'token_usage_total' => 100,
+            'meta' => null,
         ]);
 
         $response = $this->actingAs($tenantAdmin)->get('/tenant/dashboard');

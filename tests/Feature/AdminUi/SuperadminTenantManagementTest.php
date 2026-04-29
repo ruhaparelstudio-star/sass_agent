@@ -4,6 +4,7 @@ namespace Tests\Feature\AdminUi;
 
 use App\Models\ActionLog;
 use App\Models\Conversation;
+use App\Models\DecisionTrace;
 use App\Models\Handoff;
 use App\Models\LeadProfile;
 use App\Models\Tenant;
@@ -213,7 +214,7 @@ class SuperadminTenantManagementTest extends TestCase
             'status' => 'executed',
             'reason' => null,
             'payload' => null,
-            'result' => ['token_usage_total' => 5],
+            'result' => [],
         ]);
         ActionLog::query()->create([
             'tenant_id' => $tenantTwo->id,
@@ -222,7 +223,23 @@ class SuperadminTenantManagementTest extends TestCase
             'status' => 'executed',
             'reason' => null,
             'payload' => null,
-            'result' => ['token_usage_total' => 7],
+            'result' => [],
+        ]);
+        DecisionTrace::query()->create([
+            'tenant_id' => $tenantOne->id,
+            'conversation_id' => $conversationOne->id,
+            'action_log_id' => null,
+            'trace_key' => 'action_dispatch',
+            'token_usage_total' => 5,
+            'meta' => null,
+        ]);
+        DecisionTrace::query()->create([
+            'tenant_id' => $tenantTwo->id,
+            'conversation_id' => $conversationTwo->id,
+            'action_log_id' => null,
+            'trace_key' => 'action_dispatch',
+            'token_usage_total' => 7,
+            'meta' => null,
         ]);
 
         $this->actingAs($superadmin)->get('/superadmin/dashboard')
