@@ -130,4 +130,9 @@ class Tenant extends Model
     {
         return $this->hasMany(InvoiceSendLog::class);
     }
+
+    public function analyticsSnapshots(): HasMany
+    {
+        return $this->hasMany(AnalyticsSnapshot::class);
+    }
 }

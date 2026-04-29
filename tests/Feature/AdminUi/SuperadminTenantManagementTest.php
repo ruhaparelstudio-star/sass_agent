@@ -2,9 +2,14 @@
 
 namespace Tests\Feature\AdminUi;
 
+use App\Models\ActionLog;
+use App\Models\Conversation;
+use App\Models\Handoff;
+use App\Models\LeadProfile;
 use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
 
 class SuperadminTenantManagementTest extends TestCase
@@ -147,5 +152,86 @@ class SuperadminTenantManagementTest extends TestCase
     {
         $this->get('/superadmin/dashboard')->assertRedirect('/login');
         $this->get('/superadmin/tenants')->assertRedirect('/login');
+    }
+
+    public function test_superadmin_dashboard_renders_an1_aggregate_metrics(): void
+    {
+        $superadmin = User::factory()->create([
+            'role' => 'superadmin',
+        ]);
+
+        $tenantOne = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+        $tenantTwo = Tenant::query()->create([
+            'name' => 'Tenant Two',
+            'slug' => 'tenant-two',
+            'is_active' => false,
+        ]);
+
+        LeadProfile::query()->create([
+            'tenant_id' => $tenantOne->id,
+            'customer_phone' => '+621111',
+            'full_name' => 'Lead One',
+        ]);
+        LeadProfile::query()->create([
+            'tenant_id' => $tenantTwo->id,
+            'customer_phone' => '+622222',
+            'full_name' => 'Lead Two',
+        ]);
+
+        $conversationOne = Conversation::query()->create([
+            'tenant_id' => $tenantOne->id,
+            'customer_phone' => '+621111',
+            'status' => 'open',
+        ]);
+        $conversationTwo = Conversation::query()->create([
+            'tenant_id' => $tenantTwo->id,
+            'customer_phone' => '+622222',
+            'status' => 'open',
+        ]);
+
+        Handoff::query()->create([
+            'tenant_id' => $tenantOne->id,
+            'conversation_id' => $conversationOne->id,
+            'reason_code' => 'needs_human',
+            'status' => 'pending',
+        ]);
+        Handoff::query()->create([
+            'tenant_id' => $tenantTwo->id,
+            'conversation_id' => $conversationTwo->id,
+            'reason_code' => 'resolve',
+            'status' => 'resolved',
+        ]);
+
+        ActionLog::query()->create([
+            'tenant_id' => $tenantOne->id,
+            'conversation_id' => $conversationOne->id,
+            'action' => 'send_booking_link',
+            'status' => 'executed',
+            'reason' => null,
+            'payload' => null,
+            'result' => ['token_usage_total' => 5],
+        ]);
+        ActionLog::query()->create([
+            'tenant_id' => $tenantTwo->id,
+            'conversation_id' => $conversationTwo->id,
+            'action' => 'send_booking_link',
+            'status' => 'executed',
+            'reason' => null,
+            'payload' => null,
+            'result' => ['token_usage_total' => 7],
+        ]);
+
+        $this->actingAs($superadmin)->get('/superadmin/dashboard')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('summary.lead_count', 2)
+                ->where('summary.handoff_count', 2)
+                ->where('summary.booking_action_count', 2)
+                ->where('summary.token_usage_total', 12)
+            );
     }
 }

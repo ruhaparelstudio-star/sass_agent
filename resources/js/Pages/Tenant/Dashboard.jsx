@@ -10,6 +10,10 @@ export default function Dashboard({ summary, recentConversations, recentHandoffs
     { label: 'Open Conversations', value: summary?.conversations_open ?? 0 },
     { label: 'Pending Handoffs', value: summary?.handoffs_pending ?? 0 },
     { label: 'Failed Notifications', value: summary?.notifications_failed ?? 0 },
+    { label: 'Leads', value: summary?.lead_count ?? 0 },
+    { label: 'Handoffs (All)', value: summary?.handoff_count ?? 0 },
+    { label: 'Booking Executed', value: summary?.booking_action_count ?? 0 },
+    { label: 'Token Usage', value: summary?.token_usage_total ?? 0 },
   ]
 
   return (

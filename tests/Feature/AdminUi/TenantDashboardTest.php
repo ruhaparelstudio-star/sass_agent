@@ -4,6 +4,7 @@ namespace Tests\Feature\AdminUi;
 
 use App\Models\Conversation;
 use App\Models\Handoff;
+use App\Models\LeadProfile;
 use App\Models\Notification;
 use App\Models\Tenant;
 use App\Models\User;
@@ -115,6 +116,92 @@ class TenantDashboardTest extends TestCase
             ->where('summary.handoffs_pending', 1)
             ->where('summary.notifications_queued', 1)
             ->where('summary.notifications_failed', 1)
+            ->where('summary.lead_count', 0)
+            ->where('summary.handoff_count', 2)
+            ->where('summary.booking_action_count', 0)
+            ->where('summary.token_usage_total', 0)
+        );
+    }
+
+    public function test_dashboard_renders_an1_metrics_with_tenant_scope(): void
+    {
+        [$tenant, $tenantAdmin] = $this->createTenantAdmin('tenant-one');
+        $otherTenant = Tenant::query()->create([
+            'name' => 'Tenant Two',
+            'slug' => 'tenant-two',
+            'is_active' => true,
+        ]);
+
+        $conversation = Conversation::query()->create([
+            'tenant_id' => $tenant->id,
+            'customer_phone' => '+6211111111',
+            'status' => 'open',
+        ]);
+        $otherConversation = Conversation::query()->create([
+            'tenant_id' => $otherTenant->id,
+            'customer_phone' => '+6299999999',
+            'status' => 'open',
+        ]);
+
+        LeadProfile::query()->create([
+            'tenant_id' => $tenant->id,
+            'customer_phone' => '+6211111111',
+            'full_name' => 'Tenant One Lead',
+        ]);
+        LeadProfile::query()->create([
+            'tenant_id' => $otherTenant->id,
+            'customer_phone' => '+6299999999',
+            'full_name' => 'Other Lead',
+        ]);
+
+        Handoff::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'reason_code' => 'needs_human',
+            'status' => 'pending',
+        ]);
+        Handoff::query()->create([
+            'tenant_id' => $otherTenant->id,
+            'conversation_id' => $otherConversation->id,
+            'reason_code' => 'other',
+            'status' => 'pending',
+        ]);
+
+        \App\Models\ActionLog::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'action' => 'send_booking_link',
+            'status' => 'executed',
+            'reason' => null,
+            'payload' => null,
+            'result' => ['token_usage_total' => 12],
+        ]);
+        \App\Models\ActionLog::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'action' => 'send_booking_link',
+            'status' => 'blocked',
+            'reason' => 'missing_name',
+            'payload' => null,
+            'result' => ['token_usage_total' => 8],
+        ]);
+        \App\Models\ActionLog::query()->create([
+            'tenant_id' => $otherTenant->id,
+            'conversation_id' => $otherConversation->id,
+            'action' => 'send_booking_link',
+            'status' => 'executed',
+            'reason' => null,
+            'payload' => null,
+            'result' => ['token_usage_total' => 100],
+        ]);
+
+        $response = $this->actingAs($tenantAdmin)->get('/tenant/dashboard');
+
+        $response->assertOk()->assertInertia(fn (Assert $page) => $page
+            ->where('summary.lead_count', 1)
+            ->where('summary.handoff_count', 1)
+            ->where('summary.booking_action_count', 1)
+            ->where('summary.token_usage_total', 20)
         );
     }
 

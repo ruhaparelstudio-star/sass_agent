@@ -21,6 +21,13 @@ export default function Dashboard({ summary, recentTenants }) {
         <Card><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tenant Nonaktif</p><p className="mt-2 text-3xl font-bold">{summary.tenants_inactive}</p></Card>
       </section>
 
+      <section className="mt-4 grid gap-4 md:grid-cols-4">
+        <Card><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Lead</p><p className="mt-2 text-2xl font-bold">{summary.lead_count ?? 0}</p></Card>
+        <Card><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Handoff</p><p className="mt-2 text-2xl font-bold">{summary.handoff_count ?? 0}</p></Card>
+        <Card><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Booking Executed</p><p className="mt-2 text-2xl font-bold">{summary.booking_action_count ?? 0}</p></Card>
+        <Card><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Token Usage</p><p className="mt-2 text-2xl font-bold">{summary.token_usage_total ?? 0}</p></Card>
+      </section>
+
       <Card className="mt-6">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">Pusat Kendali</h2>
         <p className="mt-1 text-xs text-slate-500">Seluruh alur dipantau sebagai sistem workflow terkontrol dan tervalidasi.</p>

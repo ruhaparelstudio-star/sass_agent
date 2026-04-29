@@ -5,6 +5,7 @@ namespace App\Modules\AdminUi\Http\Controllers;
 use App\Enums\UserRole;
 use App\Http\Controllers\Controller;
 use App\Models\Tenant;
+use App\Modules\Analytics\Services\SuperadminMetricsQueryService;
 use App\Modules\Tenancy\Services\TenantService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -14,7 +15,10 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class SuperadminTenantController extends Controller
 {
-    public function __construct(private readonly TenantService $tenantService)
+    public function __construct(
+        private readonly TenantService $tenantService,
+        private readonly SuperadminMetricsQueryService $superadminMetricsQueryService,
+    )
     {
     }
 
@@ -22,12 +26,15 @@ class SuperadminTenantController extends Controller
     {
         $this->assertSuperadmin($request);
 
-        return Inertia::render('Superadmin/Dashboard', [
-            'summary' => [
+        $summary = [
                 'tenants_total' => Tenant::query()->count(),
                 'tenants_active' => Tenant::query()->where('is_active', true)->count(),
                 'tenants_inactive' => Tenant::query()->where('is_active', false)->count(),
-            ],
+            ];
+        $summary = array_merge($summary, $this->superadminMetricsQueryService->getSummary());
+
+        return Inertia::render('Superadmin/Dashboard', [
+            'summary' => $summary,
             'recentTenants' => Tenant::query()
                 ->latest('id')
                 ->limit(5)

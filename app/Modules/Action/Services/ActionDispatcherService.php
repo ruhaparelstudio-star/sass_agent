@@ -110,6 +110,11 @@ class ActionDispatcherService
         array $payload,
         array $meta
     ): array {
+        $tokenUsageFromCandidate = $payload['meta']['token_usage_total'] ?? null;
+        if (is_numeric($tokenUsageFromCandidate)) {
+            $meta['token_usage_total'] = (int) $tokenUsageFromCandidate;
+        }
+
         ActionLog::query()->create([
             'tenant_id' => $tenant->id,
             'conversation_id' => $conversation->id,

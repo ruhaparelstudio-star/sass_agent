@@ -5,11 +5,31 @@ namespace App\Modules\AdminUi\Services;
 use App\Models\Conversation;
 use App\Models\Handoff;
 use App\Models\Notification;
+use App\Modules\Analytics\Services\TenantMetricsQueryService;
 
 class TenantDashboardQueryService
 {
+    public function __construct(private readonly TenantMetricsQueryService $tenantMetricsQueryService)
+    {
+    }
+
     /**
-     * @return array{summary:array{conversations_total:int,conversations_open:int,handoffs_pending:int,notifications_queued:int,notifications_failed:int},recentConversations:array<int,array<string,mixed>>,recentHandoffs:array<int,array<string,mixed>>,recentNotifications:array<int,array<string,mixed>>}
+     * @return array{
+     *   summary:array{
+     *     conversations_total:int,
+     *     conversations_open:int,
+     *     handoffs_pending:int,
+     *     notifications_queued:int,
+     *     notifications_failed:int,
+     *     lead_count:int,
+     *     handoff_count:int,
+     *     booking_action_count:int,
+     *     token_usage_total:int
+     *   },
+     *   recentConversations:array<int,array<string,mixed>>,
+     *   recentHandoffs:array<int,array<string,mixed>>,
+     *   recentNotifications:array<int,array<string,mixed>>
+     * }
      */
     public function getDashboardData(int $tenantId): array
     {
@@ -20,6 +40,7 @@ class TenantDashboardQueryService
             'notifications_queued' => Notification::query()->where('tenant_id', $tenantId)->where('status', 'queued')->count(),
             'notifications_failed' => Notification::query()->where('tenant_id', $tenantId)->where('status', 'failed')->count(),
         ];
+        $summary = array_merge($summary, $this->tenantMetricsQueryService->getSummary($tenantId));
 
         $recentConversations = Conversation::query()
             ->where('tenant_id', $tenantId)

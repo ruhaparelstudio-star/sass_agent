@@ -133,6 +133,26 @@ class ActionDispatcherServiceTest extends TestCase
         ]);
     }
 
+    public function test_token_usage_total_in_candidate_meta_is_persisted_to_action_log_result(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        app(ActionDispatcherService::class)->dispatch(
+            $tenant,
+            $conversation,
+            [
+                'action' => 'reply_safe_text',
+                'reasons' => [],
+                'meta' => [
+                    'token_usage_total' => 77,
+                ],
+            ]
+        );
+
+        $log = \App\Models\ActionLog::query()->latest('id')->firstOrFail();
+        $this->assertSame(77, $log->result['token_usage_total'] ?? null);
+    }
+
     public function test_allowed_send_text_executes_queues_outbound_and_logs_result(): void
     {
         Queue::fake();
