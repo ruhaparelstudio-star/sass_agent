@@ -77,6 +77,27 @@ class LeadProfileService
         );
     }
 
+    /**
+     * @param  array<string,mixed>  $entities
+     */
+    public function syncFromEntities(Tenant $tenant, string $customerPhone, array $entities): LeadProfile
+    {
+        $profile = $this->findOrCreateByPhone($tenant, $customerPhone);
+
+        $candidateName = $entities['customer_name'] ?? ($entities['name'] ?? null);
+        $normalizedName = is_string($candidateName) ? trim($candidateName) : '';
+        $isCorrection = ($entities['is_correction'] ?? false) === true;
+        $correctedFields = is_array($entities['corrected_fields'] ?? null) ? $entities['corrected_fields'] : [];
+        $correctedName = in_array('customer_name', $correctedFields, true);
+
+        if ($normalizedName !== '' && ($profile->full_name === null || trim((string) $profile->full_name) === '' || $isCorrection || $correctedName)) {
+            $profile->full_name = $normalizedName;
+            $profile->save();
+        }
+
+        return $profile;
+    }
+
     private function assertProfileTenantScope(LeadProfile $profile, Tenant $tenant): void
     {
         if ((int) $profile->tenant_id !== (int) $tenant->id) {

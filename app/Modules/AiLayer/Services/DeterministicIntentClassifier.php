@@ -84,6 +84,47 @@ class DeterministicIntentClassifier implements IntentClassifierContract
         );
     }
 
+    public function fallbackFromMessage(int $tenantId, string $userMessage, string $reason, array $raw = []): InterpretationResult
+    {
+        [$isCorrection, $correctedFields] = $this->detectCorrection($userMessage, []);
+        $intent = $this->inferIntentFromMessage($userMessage, $isCorrection);
+        $customerName = $this->extractImplicitCustomerName($userMessage);
+        $confidence = match ($intent) {
+            Intent::Greeting, Intent::UnclearMessage => 0.6,
+            Intent::ProvideName, Intent::ProvideDate, Intent::ProvideEventType, Intent::ProvideBudget, Intent::ProvidePreference => 0.65,
+            Intent::Unknown => 0.0,
+            default => 0.55,
+        };
+
+        return new InterpretationResult(
+            $intent,
+            $confidence,
+            [
+                'package_query' => null,
+                'resolved_package_code' => null,
+                'resolved_package_name' => null,
+                'customer_name' => $customerName,
+                'event_type' => null,
+                'event_date_iso' => null,
+                'location' => null,
+                'budget_amount' => null,
+                'budget_min' => null,
+                'budget_max' => null,
+                'package_interest' => null,
+                'invoice_reference' => null,
+                'is_correction' => $isCorrection,
+                'corrected_fields' => $correctedFields,
+            ],
+            array_merge(
+                [
+                    'user_message' => $userMessage,
+                ],
+                $raw
+            ),
+            $reason
+        );
+    }
+
     private function normalizeConfidence(mixed $value): float
     {
         if (! is_numeric($value)) {
@@ -323,6 +364,10 @@ class DeterministicIntentClassifier implements IntentClassifierContract
             return Intent::UnclearMessage;
         }
 
+        if (preg_match('/\b(halo|hai|hi|hello|pagi|siang|sore|malam|assalam|assalamu(?:\'|)alaikum)\b/u', $text) === 1) {
+            return Intent::Greeting;
+        }
+
         if (preg_match('/\b(komplain|complain|kecewa|marah|ga puas|tidak puas)\b/u', $text) === 1) {
             return Intent::Complaint;
         }
@@ -363,10 +408,55 @@ class DeterministicIntentClassifier implements IntentClassifierContract
             return Intent::PaymentRelated;
         }
 
+        if ($this->extractImplicitCustomerName($userMessage) !== null) {
+            return Intent::ProvideName;
+        }
+
+        if ($this->parseEventDateIso($userMessage) !== null) {
+            return Intent::ProvideDate;
+        }
+
+        if (preg_match('/\b(wedding|nikah|pernikahan|akad|resepsi|engagement|tunangan)\b/u', $text) === 1) {
+            return Intent::ProvideEventType;
+        }
+
+        if ($this->parseBudgetAmount($userMessage) !== null || preg_match('/\b(budget|anggaran)\b/u', $text) === 1) {
+            return Intent::ProvideBudget;
+        }
+
+        if (preg_match('/\b(prefer|lebih suka|maunya|request|ingin|mau)\b/u', $text) === 1) {
+            return Intent::ProvidePreference;
+        }
+
         if (preg_match('/^[\p{L}\p{N}\s?!.]{1,10}$/u', $text) === 1) {
             return Intent::UnclearMessage;
         }
 
         return Intent::Unknown;
+    }
+
+    private function extractImplicitCustomerName(string $userMessage): ?string
+    {
+        $text = trim($userMessage);
+        if ($text === '') {
+            return null;
+        }
+
+        if (preg_match('/\b(?:nama\s+saya|saya|aku)\s+([\p{L}][\p{L}\s]{1,40})$/u', $text, $matches) === 1) {
+            $candidate = trim((string) ($matches[1] ?? ''));
+
+            return $candidate === '' ? null : $candidate;
+        }
+
+        $normalized = mb_strtolower($text);
+        if (preg_match('/\b(halo|hai|hi|hello|pagi|siang|sore|malam|komplain|booking|harga|pricelist|paket|tanggal|jadwal|invoice|admin)\b/u', $normalized) === 1) {
+            return null;
+        }
+
+        if (preg_match('/^[\p{L}]{2,20}(?:\s+[\p{L}]{2,20}){0,2}$/u', $text) === 1) {
+            return $text;
+        }
+
+        return null;
     }
 }

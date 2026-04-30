@@ -3,7 +3,11 @@
 namespace Tests\Unit\WhatsApp;
 
 use App\Jobs\DispatchNotificationJob;
+use App\Models\Conversation;
+use App\Models\ConversationContext;
+use App\Models\ConversationState;
 use App\Models\Handoff;
+use App\Models\LeadProfile;
 use App\Models\Notification;
 use App\Modules\AiLayer\Contracts\LlmClientContract;
 use App\Modules\AiLayer\DTO\LlmResponse;
@@ -102,8 +106,8 @@ class WaInboundTurnOrchestratorServiceTest extends TestCase
             'load_tenant_and_wa_account',
             'check_tenant_status_and_plan',
             'load_conversation_and_state',
-            'interpret_and_extract_entities',
             'retrieve_knowledge',
+            'interpret_and_extract_entities',
             'build_and_validate_decision',
             'compose_response',
             'send_reply_action',
@@ -130,6 +134,20 @@ class WaInboundTurnOrchestratorServiceTest extends TestCase
 
         $this->assertSame($trace->id, $outbound->decision_trace_id);
         $this->assertIsArray($outbound->grounding_refs);
+        $this->assertDatabaseHas('lead_profiles', [
+            'tenant_id' => $tenant->id,
+            'customer_phone' => '628111',
+        ]);
+
+        $context = ConversationContext::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $inboundMessage->conversation_id)
+            ->latest('id')
+            ->first();
+        $this->assertNotNull($context);
+        $this->assertNotNull($context?->summary);
+        $this->assertNotNull($context?->reason);
+        $this->assertSame('pricing', $context?->recommended_next_action);
     }
 
     public function test_inbound_turn_orchestrator_is_idempotent_per_inbound_message(): void
@@ -255,6 +273,162 @@ class WaInboundTurnOrchestratorServiceTest extends TestCase
         Queue::assertPushed(DispatchNotificationJob::class, function (DispatchNotificationJob $job) use ($tenant, $notification): bool {
             return $job->tenantId === $tenant->id && $job->notificationId === $notification->id;
         });
+    }
+
+    public function test_inbound_turn_orchestrator_never_sends_internal_placeholder_reply_to_user(): void
+    {
+        $this->bindLlmJson('{"intent":"first_contact","confidence":0.9,"entities":{"customer_name":"Aris"}}');
+
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+
+        $account = WaAccount::query()->create([
+            'tenant_id' => $tenant->id,
+            'provider' => 'meta',
+            'provider_ref' => 'acct-001',
+            'phone' => '+628111',
+            'status' => 'connected',
+            'last_payload' => ['event' => 'connected'],
+        ]);
+
+        $session = WaSession::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'provider' => 'meta',
+            'provider_ref' => 'sess-001',
+            'status' => 'active',
+            'last_payload' => ['event' => 'active'],
+        ]);
+
+        $inbound = WaInboundMessage::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'wa_session_id' => $session->id,
+            'provider' => 'meta',
+            'provider_message_id' => 'msg-001',
+            'from' => '+628111',
+            'to' => '+628222',
+            'message_type' => 'text',
+            'message_timestamp' => now(),
+            'payload' => [
+                'message' => [
+                    'conversation' => 'Saya aris',
+                ],
+            ],
+            'meta' => ['source' => 'test'],
+        ]);
+
+        app(WaInboundTurnOrchestratorService::class)->process($tenant, $inbound);
+
+        $outbound = \App\Models\Message::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('direction', 'outbound')
+            ->latest('id')
+            ->firstOrFail();
+
+        $this->assertStringNotContainsString('allowed candidate', mb_strtolower($outbound->content));
+
+        $trace = DecisionTrace::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('trace_key', 'inbound_turn')
+            ->latest('id')
+            ->firstOrFail();
+
+        $this->assertSame($outbound->content, $trace->final_reply);
+    }
+
+    public function test_inbound_turn_orchestrator_does_not_send_auto_reply_when_state_is_handoff_mode(): void
+    {
+        Queue::fake();
+        $this->bindLlmJson('{"intent":"unknown","confidence":0.1,"entities":{}}');
+
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+
+        $account = WaAccount::query()->create([
+            'tenant_id' => $tenant->id,
+            'provider' => 'meta',
+            'provider_ref' => 'acct-001',
+            'phone' => '+628111',
+            'status' => 'connected',
+            'last_payload' => ['event' => 'connected'],
+        ]);
+
+        $session = WaSession::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'provider' => 'meta',
+            'provider_ref' => 'sess-001',
+            'status' => 'active',
+            'last_payload' => ['event' => 'active'],
+        ]);
+
+        $conversation = Conversation::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'customer_phone' => '628111',
+            'status' => 'open',
+            'current_stage' => 'qualification',
+            'active_goal' => 'pricing',
+            'agent_mode' => 'handoff',
+            'memory_mode' => 'short',
+        ]);
+
+        ConversationState::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'current_stage' => 'qualification',
+            'active_goal' => 'pricing',
+            'agent_mode' => 'handoff',
+            'memory_mode' => 'short',
+            'retention_policy' => 'standard',
+        ]);
+
+        $inbound = WaInboundMessage::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'wa_session_id' => $session->id,
+            'provider' => 'meta',
+            'provider_message_id' => 'msg-handoff-001',
+            'from' => '+628111',
+            'to' => '+628222',
+            'message_type' => 'text',
+            'message_timestamp' => now(),
+            'payload' => [
+                'message' => [
+                    'conversation' => 'Halo admin?',
+                ],
+            ],
+            'meta' => ['source' => 'test'],
+        ]);
+
+        app(WaInboundTurnOrchestratorService::class)->process($tenant, $inbound);
+
+        $this->assertDatabaseMissing('messages', [
+            'tenant_id' => $tenant->id,
+            'direction' => 'outbound',
+        ]);
+
+        $this->assertDatabaseHas('handoffs', [
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'reason_code' => 'mode_handoff',
+            'status' => 'pending',
+        ]);
+
+        $trace = DecisionTrace::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('trace_key', 'inbound_turn')
+            ->latest('id')
+            ->firstOrFail();
+
+        $this->assertSame('skipped_mode_no_auto_reply', $trace->meta['reply_dispatch']['reason'] ?? null);
     }
 
     private function bindLlmJson(string $json): void

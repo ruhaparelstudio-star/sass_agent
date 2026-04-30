@@ -86,7 +86,7 @@ class TenantConversationInboxTest extends TestCase
             'conversation_id' => $selectedConversation->id,
             'current_stage' => 'qualified',
             'active_goal' => 'booking',
-            'agent_mode' => 'ai',
+            'agent_mode' => 'assistant',
             'memory_mode' => 'short',
         ]);
         LeadProfile::query()->create([
@@ -228,7 +228,7 @@ class TenantConversationInboxTest extends TestCase
         $this->assertDatabaseHas('conversation_states', [
             'tenant_id' => $tenant->id,
             'conversation_id' => $conversation->id,
-            'agent_mode' => 'ai',
+            'agent_mode' => 'assistant',
         ]);
     }
 

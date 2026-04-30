@@ -48,6 +48,9 @@ class TurnPipelineService
         if ($updatedGoal !== null && $updatedGoal !== $state->active_goal) {
             $state->active_goal = $updatedGoal;
             $state->save();
+            $conversation->forceFill([
+                'active_goal' => $state->active_goal,
+            ])->save();
         }
 
         $leadProfile = LeadProfile::query()
@@ -61,6 +64,7 @@ class TurnPipelineService
             'allowed' => [],
             'blocked' => [],
         ];
+        $validationFailureReason = null;
 
         $dispatchTrace = [
             'executed' => false,
@@ -98,6 +102,7 @@ class TurnPipelineService
             $validationError = $this->runValidators($candidate, $validationContext);
 
             if ($validationError !== null) {
+                $validationFailureReason = $validationError;
                 $candidate['reasons'] = [$validationError];
                 $result['blocked'][] = $candidate;
                 $dispatchResult = $this->actionDispatcherService->dispatch($tenant, $conversation, $candidate);
@@ -126,10 +131,9 @@ class TurnPipelineService
             ];
         }, $result['blocked']));
 
-        $allowedActions = array_values(array_map(
-            fn (array $row): string => (string) ($row['action'] ?? ''),
-            $result['allowed']
-        ));
+        $allowedActions = array_values(array_map(function (array $row): string {
+            return $this->normalizeDecisionActionName((string) ($row['action'] ?? ''));
+        }, $result['allowed']));
 
         $handoffSignal = $this->resolveHandoffSignal(
             $interpretation->intent,
@@ -163,7 +167,7 @@ class TurnPipelineService
             ],
             'action_candidates' => $result,
             'response_plan' => [
-                'message' => $this->buildResponsePlanMessage($result),
+                'message' => $this->buildResponsePlanMessage($interpretation->intent, $result),
             ],
             'trace' => [
                 'executed' => $dispatchTrace['executed'],
@@ -171,6 +175,7 @@ class TurnPipelineService
                 'status' => $dispatchTrace['status'],
                 'reason' => $dispatchTrace['reason'],
                 'validator_order' => ['policy', 'grounding', 'permission', 'mode'],
+                'validation_failure_reason' => $validationFailureReason,
                 'fallback_reason' => $interpretation->fallbackReason,
                 'dormant_retrieval' => [
                     'triggered' => $dormantRetrieval['triggered'],
@@ -379,10 +384,18 @@ class TurnPipelineService
         ];
     }
 
-    private function buildResponsePlanMessage(array $candidates): string
+    private function buildResponsePlanMessage(Intent $intent, array $candidates): string
     {
+        if (in_array($intent, [Intent::Greeting, Intent::UnclearMessage], true)) {
+            return 'Halo, kami siap bantu. Boleh info kebutuhan Anda, misalnya paket, tanggal acara, atau budget?';
+        }
+
+        if ($intent === Intent::ProvideName) {
+            return 'Terima kasih, namanya sudah kami catat. Boleh share tanggal acara Anda?';
+        }
+
         if (($candidates['blocked'] ?? []) === []) {
-            return 'Respond safely based on allowed candidate only.';
+            return 'Terima kasih, boleh ceritakan kebutuhan acara Anda agar kami bisa bantu rekomendasi paket yang paling sesuai?';
         }
 
         $reasons = $candidates['blocked'][0]['reasons'] ?? [];
@@ -392,6 +405,15 @@ class TurnPipelineService
         }
 
         return 'Jelaskan data yang masih kurang dan jangan eksekusi aksi.';
+    }
+
+    private function normalizeDecisionActionName(string $action): string
+    {
+        if ($action === 'reply_safe_text') {
+            return 'reply_text';
+        }
+
+        return $action;
     }
 
     private function runValidators(array $candidate, array $context): ?string
@@ -425,6 +447,7 @@ class TurnPipelineService
             Intent::AskPrice, Intent::AskPricelist => 'pricing',
             Intent::BookingIntent => 'booking',
             Intent::AskAvailability => 'availability',
+            Intent::ProvideName, Intent::ProvideDate, Intent::ProvideEventType, Intent::ProvideBudget, Intent::ProvidePreference => 'qualification',
             default => null,
         };
     }
@@ -486,6 +509,8 @@ class TurnPipelineService
         array $context
     ): array
     {
+        $agentMode = $this->normalizeAgentMode($agentMode);
+
         if ($agentMode === 'paused') {
             return [
                 'required' => true,
@@ -539,7 +564,7 @@ class TurnPipelineService
             ];
         }
 
-        if ($confidence < self::LOW_CONFIDENCE_THRESHOLD) {
+        if ($confidence < self::LOW_CONFIDENCE_THRESHOLD && (($context['force_handoff_on_low_confidence'] ?? false) === true)) {
             return [
                 'required' => true,
                 'reason_code' => 'low_confidence',
@@ -574,6 +599,16 @@ class TurnPipelineService
             'reason_code' => $policyBlocked ? 'policy_blocked' : null,
             'priority' => $policyBlocked ? 'high' : null,
         ];
+    }
+
+    private function normalizeAgentMode(string $agentMode): string
+    {
+        $normalized = strtolower(trim($agentMode));
+
+        return match ($normalized) {
+            'ai' => 'assistant',
+            default => $normalized,
+        };
     }
 
     private function deriveDecisionKeyword(array $candidates, bool $handoffRequired): string

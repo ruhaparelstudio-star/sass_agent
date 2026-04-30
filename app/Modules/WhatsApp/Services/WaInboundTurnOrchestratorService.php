@@ -4,6 +4,7 @@ namespace App\Modules\WhatsApp\Services;
 
 use App\Enums\MessageDirection;
 use App\Models\Conversation;
+use App\Models\ConversationContext;
 use App\Models\DecisionTrace;
 use App\Models\Tenant;
 use App\Models\WaInboundMessage;
@@ -19,6 +20,31 @@ use Illuminate\Support\Facades\DB;
 
 class WaInboundTurnOrchestratorService
 {
+    private const INTERPRETATION_INSTRUCTION = <<<'TEXT'
+Return ONLY valid JSON object (no prose, no markdown, no code fence) with exact schema:
+{
+  "intent": "string",
+  "confidence": 0.0,
+  "entities": {
+    "package_query": null,
+    "customer_name": null,
+    "event_type": null,
+    "event_date": null,
+    "location": null,
+    "budget": null,
+    "budget_min": null,
+    "budget_max": null,
+    "package_interest": null,
+    "invoice_reference": null,
+    "correction": false,
+    "corrected_fields": []
+  }
+}
+Allowed intent values:
+greeting, first_contact, intro_interest, ask_package, ask_package_detail, ask_price, ask_pricelist, ask_availability, provide_name, provide_date, provide_event_type, provide_budget, provide_preference, booking_intent, request_handoff, complaint, payment_related, topic_switch, correction, unclear_message, unknown
+If unsure set intent="unknown", confidence=0.0, keep entities null/empty.
+TEXT;
+
     /**
      * @var list<string>
      */
@@ -78,6 +104,7 @@ class WaInboundTurnOrchestratorService
                 $conversation->forceFill(['wa_account_id' => $inboundMessage->wa_account_id])->save();
             }
             $state = $this->conversationService->upsertState($conversation, $tenant);
+            $initialAgentMode = (string) $state->agent_mode;
             $executedSteps[] = 'load_conversation_and_state';
 
             $inboundConversationMessage = $this->conversationService->storeMessage($conversation, $tenant, MessageDirection::Inbound, $text, [
@@ -93,37 +120,60 @@ class WaInboundTurnOrchestratorService
                 $tenant,
                 $conversation,
                 $text,
-                'Extract deterministic intent/entities and return safe decision JSON.',
+                self::INTERPRETATION_INSTRUCTION,
                 $context
             );
             $executedSteps[] = 'interpret_and_extract_entities';
             $executedSteps[] = 'build_and_validate_decision';
+            $this->conversationService->syncLeadFromEntities($conversation, $tenant, is_array($pipeline['entities'] ?? null) ? $pipeline['entities'] : []);
 
             $executedSteps[] = 'compose_response';
             $replyText = $this->composeReplyText($pipeline);
+            $this->storeConversationContext($tenant, $conversation, $pipeline, $replyText);
 
-            $sendTextCandidate = [
-                'action' => 'send_text',
-                'reasons' => [],
-                'meta' => [
-                    'send_text' => [
-                        'provider' => $inboundMessage->provider,
-                        'wa_account_provider_ref' => (string) $inboundMessage->account?->provider_ref,
-                        'wa_session_provider_ref' => $inboundMessage->session?->provider_ref,
-                        'provider_message_id' => null,
-                        'to' => $inboundMessage->from,
-                        'text' => $replyText,
-                        'meta' => [
-                            'source' => 'turn_pipeline',
-                            'inbound_message_id' => $inboundMessage->id,
-                            'conversation_id' => $conversation->id,
-                        ],
-                    ],
-                ],
+            $dispatchResult = [
+                'status' => 'skipped',
+                'reason' => null,
+            ];
+            $replyDispatch = [
+                'status' => 'skipped',
+                'reason' => null,
             ];
 
-            $dispatchResult = $this->actionDispatcherService->dispatch($tenant, $conversation, $sendTextCandidate);
+            if ($this->shouldSendAutoReply($pipeline, $initialAgentMode)) {
+                $sendTextCandidate = [
+                    'action' => 'send_text',
+                    'reasons' => [],
+                    'meta' => [
+                        'send_text' => [
+                            'provider' => $inboundMessage->provider,
+                            'wa_account_provider_ref' => (string) $inboundMessage->account?->provider_ref,
+                            'wa_session_provider_ref' => $inboundMessage->session?->provider_ref,
+                            'provider_message_id' => null,
+                            'to' => $inboundMessage->from,
+                            'text' => $replyText,
+                            'meta' => [
+                                'source' => 'turn_pipeline',
+                                'inbound_message_id' => $inboundMessage->id,
+                                'conversation_id' => $conversation->id,
+                            ],
+                        ],
+                    ],
+                ];
+
+                $dispatchResult = $this->actionDispatcherService->dispatch($tenant, $conversation, $sendTextCandidate);
+                $replyDispatch = [
+                    'status' => (string) ($dispatchResult['status'] ?? 'blocked'),
+                    'reason' => is_string($dispatchResult['reason'] ?? null) ? $dispatchResult['reason'] : null,
+                ];
+            } else {
+                $replyDispatch = [
+                    'status' => 'skipped',
+                    'reason' => 'skipped_mode_no_auto_reply',
+                ];
+            }
             $executedSteps[] = 'send_reply_action';
+
             $handoffDispatch = $this->dispatchHandoffIfRequired(
                 $tenant,
                 $conversation,
@@ -132,6 +182,7 @@ class WaInboundTurnOrchestratorService
             );
 
             $executedSteps[] = 'store_trace';
+            $pipeline['trace']['pipeline_steps'] = $this->orderedUniqueSteps($executedSteps);
             $trace = DecisionTrace::query()->create([
                 'tenant_id' => $tenant->id,
                 'conversation_id' => $conversation->id,
@@ -156,6 +207,7 @@ class WaInboundTurnOrchestratorService
                     'order' => $pipeline['trace']['validator_order'] ?? [],
                     'status' => (($pipeline['blocked_actions'] ?? []) === []) ? 'passed' : 'blocked',
                     'fallback_reason' => $pipeline['trace']['fallback_reason'] ?? null,
+                    'validation_failure_reason' => $pipeline['trace']['validation_failure_reason'] ?? null,
                 ],
                 'blocked_actions_json' => $pipeline['blocked_actions'] ?? [],
                 'grounding_refs_json' => $pipeline['grounding_refs'] ?? [],
@@ -171,19 +223,22 @@ class WaInboundTurnOrchestratorService
                     'decision' => $pipeline,
                     'final_reply' => $replyText,
                     'handoff_dispatch' => $handoffDispatch,
+                    'reply_dispatch' => $replyDispatch,
                     'lead_limit' => $context['lead_limit'] ?? null,
-                    'pipeline_steps' => $this->normalizeStepOrder($executedSteps),
+                    'pipeline_steps' => $pipeline['trace']['pipeline_steps'] ?? [],
                 ],
             ]);
 
-            $this->conversationService->storeMessage($conversation, $tenant, MessageDirection::Outbound, $replyText, [
-                'source' => 'whatsapp_turn_pipeline',
-                'wa_inbound_message_id' => $inboundMessage->id,
-                'dispatch_status' => $dispatchResult['status'] ?? null,
-                'dispatch_reason' => $dispatchResult['reason'] ?? null,
-                'handoff_dispatch_status' => $handoffDispatch['status'] ?? null,
-                'handoff_dispatch_reason' => $handoffDispatch['reason'] ?? null,
-            ], 'text', null, $pipeline['grounding_refs'] ?? [], $trace->id);
+            if (($replyDispatch['status'] ?? null) === 'executed') {
+                $this->conversationService->storeMessage($conversation, $tenant, MessageDirection::Outbound, $replyText, [
+                    'source' => 'whatsapp_turn_pipeline',
+                    'wa_inbound_message_id' => $inboundMessage->id,
+                    'dispatch_status' => $dispatchResult['status'] ?? null,
+                    'dispatch_reason' => $dispatchResult['reason'] ?? null,
+                    'handoff_dispatch_status' => $handoffDispatch['status'] ?? null,
+                    'handoff_dispatch_reason' => $handoffDispatch['reason'] ?? null,
+                ], 'text', null, $pipeline['grounding_refs'] ?? [], $trace->id);
+            }
         });
     }
 
@@ -191,14 +246,9 @@ class WaInboundTurnOrchestratorService
      * @param  list<string>  $executedSteps
      * @return list<string>
      */
-    private function normalizeStepOrder(array $executedSteps): array
+    private function orderedUniqueSteps(array $executedSteps): array
     {
-        $executed = array_values(array_unique($executedSteps));
-
-        return array_values(array_filter(
-            self::PIPELINE_STEPS,
-            static fn (string $step): bool => in_array($step, $executed, true)
-        ));
+        return array_values(array_unique($executedSteps));
     }
 
     /**
@@ -320,6 +370,34 @@ class WaInboundTurnOrchestratorService
     /**
      * @param  array<string,mixed>  $pipeline
      */
+    private function shouldSendAutoReply(array $pipeline, string $initialAgentMode): bool
+    {
+        $mode = $this->normalizeAgentMode($initialAgentMode);
+        if (in_array($mode, ['paused', 'handoff'], true)) {
+            return false;
+        }
+
+        $reason = is_string($pipeline['trace']['reason'] ?? null) ? (string) $pipeline['trace']['reason'] : null;
+        if (in_array($reason, ['mode_paused_blocked', 'mode_handoff_blocked'], true)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private function normalizeAgentMode(string $mode): string
+    {
+        $normalized = strtolower(trim($mode));
+
+        return match ($normalized) {
+            'ai' => 'assistant',
+            default => $normalized,
+        };
+    }
+
+    /**
+     * @param  array<string,mixed>  $pipeline
+     */
     private function composeReplyText(array $pipeline): string
     {
         $handoffRequired = ($pipeline['handoff_required'] ?? false) === true;
@@ -329,10 +407,18 @@ class WaInboundTurnOrchestratorService
 
         $message = $pipeline['response_plan']['message'] ?? null;
         if (is_string($message) && trim($message) !== '') {
-            return trim($message);
+            $normalized = trim($message);
+            if (! $this->isInternalPlaceholderReply($normalized)) {
+                return $normalized;
+            }
         }
 
         return 'Terima kasih. Kami sedang memproses pesan Anda dengan aman.';
+    }
+
+    private function isInternalPlaceholderReply(string $reply): bool
+    {
+        return str_contains(mb_strtolower($reply), 'allowed candidate');
     }
 
     /**
@@ -385,5 +471,54 @@ class WaInboundTurnOrchestratorService
             'status' => (string) ($result['status'] ?? 'blocked'),
             'reason' => is_string($result['reason'] ?? null) ? $result['reason'] : null,
         ];
+    }
+
+    /**
+     * @param  array<string,mixed>  $pipeline
+     */
+    private function storeConversationContext(
+        Tenant $tenant,
+        Conversation $conversation,
+        array $pipeline,
+        string $replyText
+    ): void {
+        $intent = is_string($pipeline['intent'] ?? null) ? $pipeline['intent'] : 'unknown';
+        $decision = is_string($pipeline['decision'] ?? null) ? $pipeline['decision'] : 'unknown';
+        $confidence = is_numeric($pipeline['confidence'] ?? null)
+            ? number_format((float) $pipeline['confidence'], 2, '.', '')
+            : '0.00';
+
+        $blockedAction = null;
+        $firstBlocked = $pipeline['blocked_actions'][0] ?? null;
+        if (is_array($firstBlocked)) {
+            $action = is_string($firstBlocked['action'] ?? null) ? $firstBlocked['action'] : null;
+            $reason = is_string($firstBlocked['reason'] ?? null) ? $firstBlocked['reason'] : null;
+            if ($action !== null && $reason !== null) {
+                $blockedAction = $action.':'.$reason;
+            }
+        }
+
+        $reason = is_string($pipeline['handoff_reason_code'] ?? null)
+            ? $pipeline['handoff_reason_code']
+            : (is_string($pipeline['trace']['fallback_reason'] ?? null) ? $pipeline['trace']['fallback_reason'] : null);
+        if ($reason === null) {
+            $reason = $blockedAction ?? 'decision_executed';
+        }
+
+        ConversationContext::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'summary' => sprintf(
+                'Intent=%s; Decision=%s; Confidence=%s; Reply=%s',
+                $intent,
+                $decision,
+                $confidence,
+                mb_substr($replyText, 0, 180)
+            ),
+            'reason' => $reason,
+            'recommended_next_action' => is_string($pipeline['active_goal'] ?? null)
+                ? $pipeline['active_goal']
+                : null,
+        ]);
     }
 }

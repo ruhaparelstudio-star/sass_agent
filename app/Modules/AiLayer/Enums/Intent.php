@@ -12,6 +12,11 @@ enum Intent: string
     case AskPrice = 'ask_price';
     case AskPricelist = 'ask_pricelist';
     case AskAvailability = 'ask_availability';
+    case ProvideName = 'provide_name';
+    case ProvideDate = 'provide_date';
+    case ProvideEventType = 'provide_event_type';
+    case ProvideBudget = 'provide_budget';
+    case ProvidePreference = 'provide_preference';
     case BookingIntent = 'booking_intent';
     case RequestHandoff = 'request_handoff';
     case Complaint = 'complaint';
@@ -34,6 +39,11 @@ enum Intent: string
             'ask_package_comparison' => self::AskPackageDetail,
             'ask_availability_date' => self::AskAvailability,
             'availability' => self::AskAvailability,
+            'provide_customer_name' => self::ProvideName,
+            'provide_event_date' => self::ProvideDate,
+            'provide_type' => self::ProvideEventType,
+            'provide_budget_range' => self::ProvideBudget,
+            'provide_needs' => self::ProvidePreference,
             'ask_booking_flow' => self::BookingIntent,
             'request_admin' => self::RequestHandoff,
             'handoff' => self::RequestHandoff,

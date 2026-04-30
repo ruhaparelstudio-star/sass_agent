@@ -29,7 +29,7 @@ class InterpretationService
         $guarded = $this->jsonGuard->sanitize($llmResponse->content);
 
         if (($guarded['ok'] ?? false) !== true || ! is_string($guarded['json'] ?? null)) {
-            return InterpretationResult::safeFallback((string) ($guarded['reason'] ?? 'invalid_json'), [
+            return $this->classifier->fallbackFromMessage($tenantId, $userMessage, (string) ($guarded['reason'] ?? 'invalid_json'), [
                 'user_message' => $userMessage,
                 'llm_raw' => $llmResponse->raw,
                 'llm_content' => $llmResponse->content,

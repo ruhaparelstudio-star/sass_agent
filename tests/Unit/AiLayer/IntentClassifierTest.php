@@ -305,7 +305,7 @@ class IntentClassifierTest extends TestCase
             'unclear_message' => [
                 'halo?',
                 [],
-                Intent::UnclearMessage,
+                Intent::Greeting,
             ],
         ];
 

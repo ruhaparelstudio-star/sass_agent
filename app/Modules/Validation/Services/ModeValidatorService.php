@@ -8,7 +8,7 @@ class ModeValidatorService implements ModeValidator
 {
     public function validate(array $candidate, array $context): ?string
     {
-        $agentMode = (string) ($context['state']['agent_mode'] ?? 'active');
+        $agentMode = $this->normalizeMode((string) ($context['state']['agent_mode'] ?? 'active'));
         $action = (string) ($candidate['action'] ?? '');
 
         if ($agentMode === 'active' || $agentMode === 'assistant') {
@@ -32,5 +32,15 @@ class ModeValidatorService implements ModeValidator
         }
 
         return 'invalid_mode';
+    }
+
+    private function normalizeMode(string $mode): string
+    {
+        $normalized = strtolower(trim($mode));
+
+        return match ($normalized) {
+            'ai' => 'assistant',
+            default => $normalized,
+        };
     }
 }

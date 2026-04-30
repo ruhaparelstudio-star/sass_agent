@@ -186,6 +186,46 @@ class TurnPipelineServiceTest extends TestCase
         ], $result['trace']['dormant_retrieval']);
     }
 
+    public function test_invalid_json_for_short_greeting_is_classified_as_greeting_and_not_auto_handoff(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        $this->bindLlmJson('{"intent":"ask_price"');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'Siang',
+            'extract intent'
+        );
+
+        $this->assertSame('greeting', $result['intent']);
+        $this->assertSame(0.6, $result['confidence']);
+        $this->assertFalse($result['handoff_required']);
+        $this->assertSame('allow_action', $result['decision']);
+        $this->assertStringContainsString('siap bantu', mb_strtolower($result['response_plan']['message']));
+        $this->assertSame('invalid_json', $result['trace']['fallback_reason']);
+    }
+
+    public function test_first_contact_uses_user_facing_reply_and_normalized_reply_text_action(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        $this->bindLlmJson('{"intent":"first_contact","confidence":0.9,"entities":{"customer_name":"Aris"}}');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'Saya Aris',
+            'extract intent'
+        );
+
+        $this->assertSame('first_contact', $result['intent']);
+        $this->assertSame(['reply_text'], $result['allowed_actions']);
+        $this->assertNotSame('Respond safely based on allowed candidate only.', $result['response_plan']['message']);
+        $this->assertStringNotContainsString('allowed candidate', mb_strtolower($result['response_plan']['message']));
+    }
+
     public function test_booking_intent_with_missing_requirements_blocks_booking_candidate(): void
     {
         [$tenant, $conversation] = $this->createConversation();
@@ -337,6 +377,7 @@ class TurnPipelineServiceTest extends TestCase
 
         $this->assertSame(['policy'], $tracker->calls);
         $this->assertSame(['policy_blocked'], $result['action_candidates']['blocked'][0]['reasons']);
+        $this->assertSame('policy_blocked', $result['trace']['validation_failure_reason']);
     }
 
     public function test_pipeline_dispatches_allowed_candidate_through_dispatcher_without_direct_outbound_send(): void
@@ -546,17 +587,18 @@ class TurnPipelineServiceTest extends TestCase
             'extract intent'
         );
 
-        $this->assertSame('unknown', $result['intent']);
-        $this->assertSame('handoff_required', $result['decision']);
-        $this->assertSame(['reply_safe_text'], $result['allowed_actions']);
-        $this->assertSame([], $result['blocked_actions']);
-        $this->assertTrue($result['handoff_required']);
-        $this->assertTrue($result['notification_required']);
+        $this->assertSame('ask_pricelist', $result['intent']);
+        $this->assertSame('ask_missing_required_info', $result['decision']);
+        $this->assertSame([], $result['allowed_actions']);
+        $this->assertSame('send_file', $result['blocked_actions'][0]['action']);
+        $this->assertSame('missing_name', $result['blocked_actions'][0]['reason']);
+        $this->assertFalse($result['handoff_required']);
+        $this->assertFalse($result['notification_required']);
         $this->assertFalse(in_array('send_file', $result['allowed_actions'], true));
         $this->assertFalse(in_array('send_booking_link', $result['allowed_actions'], true));
         $this->assertFalse(in_array('send_invoice', $result['allowed_actions'], true));
         $this->assertSame('invalid_json', $result['trace']['fallback_reason']);
-        $this->assertSame('reply_safe_text', $result['trace']['action']);
+        $this->assertSame('send_file', $result['trace']['action']);
     }
 
     public function test_complaint_intent_triggers_handoff_signal_with_high_priority(): void
@@ -649,6 +691,25 @@ class TurnPipelineServiceTest extends TestCase
         $this->assertTrue($result['handoff_required']);
         $this->assertSame('mode_paused', $result['handoff_reason_code']);
         $this->assertSame('critical', $result['handoff_priority']);
+    }
+
+    public function test_low_confidence_unknown_message_uses_safe_recovery_without_auto_handoff(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        $this->bindLlmJson('{"intent":"unknown","confidence":0.1,"entities":{"customer_name":null}}');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'Aris egi ka',
+            'extract intent'
+        );
+
+        $this->assertSame('provide_name', $result['intent']);
+        $this->assertFalse($result['handoff_required']);
+        $this->assertFalse($result['notification_required']);
+        $this->assertSame('allow_action', $result['decision']);
     }
 
     private function createConversation(): array

@@ -120,13 +120,22 @@ class ConversationService
             'retention_until' => null,
         ];
 
-        $state = ConversationState::query()->updateOrCreate(
-            [
+        $state = ConversationState::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->first();
+
+        if (! $state) {
+            $state = new ConversationState([
                 'tenant_id' => $tenant->id,
                 'conversation_id' => $conversation->id,
-            ],
-            array_merge($defaults, $attributes)
-        );
+            ]);
+            $state->fill(array_merge($defaults, $attributes));
+            $state->save();
+        } elseif ($attributes !== []) {
+            $state->fill($attributes);
+            $state->save();
+        }
 
         $conversation->forceFill([
             'current_stage' => $state->current_stage,
@@ -136,5 +145,22 @@ class ConversationService
         ])->save();
 
         return $state;
+    }
+
+    /**
+     * @param  array<string,mixed>  $entities
+     */
+    public function syncLeadFromEntities(Conversation $conversation, Tenant $tenant, array $entities): void
+    {
+        $existsInTenant = Conversation::query()
+            ->whereKey($conversation->id)
+            ->where('tenant_id', $tenant->id)
+            ->exists();
+
+        if (! $existsInTenant) {
+            throw new HttpException(403, 'Forbidden tenant scope.');
+        }
+
+        $this->leadProfileService->syncFromEntities($tenant, (string) $conversation->customer_phone, $entities);
     }
 }

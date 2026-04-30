@@ -43,7 +43,7 @@ class InterpretationServiceTest extends TestCase
         $this->assertNull($result->fallbackReason);
     }
 
-    public function test_invalid_provider_json_returns_safe_fallback(): void
+    public function test_invalid_provider_json_uses_deterministic_message_fallback(): void
     {
         $tenant = $this->createTenantWithPackage('tenant-one', 'gold', 'Gold Package');
 
@@ -61,7 +61,8 @@ class InterpretationServiceTest extends TestCase
 
         $result = app(InterpretationService::class)->interpret($tenant->id, 'halo', 'extract intent');
 
-        $this->assertSame(Intent::Unknown, $result->intent);
+        $this->assertSame(Intent::Greeting, $result->intent);
+        $this->assertSame(0.6, $result->confidence);
         $this->assertSame('invalid_json', $result->fallbackReason);
     }
 

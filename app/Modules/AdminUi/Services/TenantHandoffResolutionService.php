@@ -86,7 +86,11 @@ class TenantHandoffResolutionService
             throw new HttpException(409, 'Conversation state not found.');
         }
 
-        $state->agent_mode = 'ai';
+        $state->agent_mode = 'assistant';
         $state->save();
+
+        $conversation->forceFill([
+            'agent_mode' => 'assistant',
+        ])->save();
     }
 }

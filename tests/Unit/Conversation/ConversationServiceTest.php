@@ -204,6 +204,44 @@ class ConversationServiceTest extends TestCase
         ]);
     }
 
+    public function test_upsert_state_without_attributes_does_not_reset_existing_state_values(): void
+    {
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+
+        $service = app(ConversationService::class);
+        $conversation = $service->findOrCreateActiveConversation($tenant, '+628188887777');
+
+        $service->upsertState($conversation, $tenant, [
+            'current_stage' => 'qualification',
+            'active_goal' => 'pricing',
+            'agent_mode' => 'limited',
+            'memory_mode' => 'dormant',
+            'retention_policy' => 'strict_30d',
+            'retention_until' => '2026-06-01 00:00:00',
+        ]);
+
+        $state = $service->upsertState($conversation, $tenant);
+
+        $this->assertSame('qualification', $state->current_stage);
+        $this->assertSame('pricing', $state->active_goal);
+        $this->assertSame('limited', $state->agent_mode);
+        $this->assertSame('dormant', $state->memory_mode);
+        $this->assertSame('strict_30d', $state->retention_policy);
+        $this->assertNotNull($state->retention_until);
+
+        $this->assertDatabaseHas('conversations', [
+            'id' => $conversation->id,
+            'current_stage' => 'qualification',
+            'active_goal' => 'pricing',
+            'agent_mode' => 'limited',
+            'memory_mode' => 'dormant',
+        ]);
+    }
+
     public function test_store_message_dispatches_summary_job_when_message_count_reaches_twenty(): void
     {
         $tenant = Tenant::query()->create([

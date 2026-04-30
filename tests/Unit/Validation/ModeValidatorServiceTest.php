@@ -39,6 +39,22 @@ class ModeValidatorServiceTest extends TestCase
         $this->assertNull($reason);
     }
 
+    public function test_ai_mode_alias_is_treated_as_assistant_for_backward_compatibility(): void
+    {
+        $validator = new ModeValidatorService;
+
+        $reason = $validator->validate(
+            ['action' => 'send_file'],
+            [
+                'state' => [
+                    'agent_mode' => 'ai',
+                ],
+            ]
+        );
+
+        $this->assertNull($reason);
+    }
+
     public function test_limited_mode_blocks_sensitive_action(): void
     {
         $validator = new ModeValidatorService;
