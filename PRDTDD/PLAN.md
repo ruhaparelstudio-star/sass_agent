@@ -200,16 +200,16 @@ Exit criteria P2:
 
 ### A. `AgentCore` (Owner: Pipeline, Decision, Validator)
 P0 checklist:
-- [ ] Implement/rapikan orchestrator inbound turn tunggal (entrypoint decision-driven).
-- [ ] Pastikan urutan langkah turn mengikuti PRD 7.2 tanpa skip.
-- [ ] Standarkan decision contract (field wajib PRD 7.3).
-- [ ] Tegakkan validator chain strict order: policy -> grounding -> permission -> mode.
-- [ ] Implement fail-safe: invalid JSON, missing data/grounding, low confidence, system error.
-- [ ] Persist `decision_traces` + `action_logs` konsisten setiap turn.
+- [x] Implement/rapikan orchestrator inbound turn tunggal (entrypoint decision-driven).
+- [x] Pastikan urutan langkah turn mengikuti PRD 7.2 tanpa skip.
+- [x] Standarkan decision contract (field wajib PRD 7.3).
+- [x] Tegakkan validator chain strict order: policy -> grounding -> permission -> mode.
+- [x] Implement fail-safe: invalid JSON, missing data/grounding, low confidence, system error.
+- [x] Persist `decision_traces` + `action_logs` konsisten setiap turn.
 
 P1 checklist:
-- [ ] Sinkronkan rule handoff/notification dari decision output.
-- [ ] Bakukan reason code taxonomy untuk blocked action lintas validator.
+- [x] Sinkronkan rule handoff/notification dari decision output.
+- [x] Bakukan reason code taxonomy untuk blocked action lintas validator.
 
 PR candidates:
 1. `agentcore/pipeline-orchestrator-p0`
@@ -218,13 +218,13 @@ PR candidates:
 
 ### B. `Conversation` (Owner: State, Stage, Message, Memory)
 P0 checklist:
-- [ ] Pastikan load/create conversation + state + lead profile konsisten di awal turn.
-- [ ] Simpan inbound/outbound message terhubung ke decision trace.
+- [x] Pastikan load/create conversation + state + lead profile konsisten di awal turn.
+- [x] Simpan inbound/outbound message terhubung ke decision trace.
 
 P1 checklist:
-- [ ] Terapkan transition guard stage/goal sesuai PRD (correction tidak reset stage).
-- [ ] Terapkan mode behavior: `paused`, `handoff`, `limited`, `active`.
-- [ ] Terapkan memory mode `active/dormant` + dormant trigger retrieval.
+- [x] Terapkan transition guard stage/goal sesuai PRD (correction tidak reset stage).
+- [x] Terapkan mode behavior: `paused`, `handoff`, `limited`, `active`.
+- [x] Terapkan memory mode `active/dormant` + dormant trigger retrieval.
 
 PR candidates:
 1. `conversation/state-load-and-trace-linking`
@@ -233,13 +233,13 @@ PR candidates:
 
 ### C. `WhatsApp` (Owner: Inbound, Dedupe, Outbound, Status)
 P0 checklist:
-- [ ] Pastikan endpoint inbound memanggil pipeline baru (bukan static auto-reply).
-- [ ] Dedupe idempotent: `provider + provider_message_id + tenant_id`.
-- [ ] Sinkronkan status lifecycle WA account dengan PRD (connect/reconnect/failed).
-- [ ] Queue outbound + delivery log aman untuk retry tanpa duplikasi action.
+- [x] Pastikan endpoint inbound memanggil pipeline baru (bukan static auto-reply).
+- [x] Dedupe idempotent: `provider + provider_message_id + tenant_id`.
+- [x] Sinkronkan status lifecycle WA account dengan PRD (connect/reconnect/failed).
+- [x] Queue outbound + delivery log aman untuk retry tanpa duplikasi action.
 
 P1 checklist:
-- [ ] Perkuat reconnect/session-expired behavior + observability.
+- [x] Perkuat reconnect/session-expired behavior + observability.
 
 PR candidates:
 1. `whatsapp/inbound-to-pipeline`
@@ -248,13 +248,13 @@ PR candidates:
 
 ### D. `Knowledge` (Owner: Grounded Data & Asset Validation)
 P0 checklist:
-- [ ] Structured knowledge sebagai source utama (price/package/booking config).
-- [ ] Grounding validator memastikan price/package/file/link berasal dari tenant data valid.
-- [ ] Blok send file jika asset tidak valid/tidak tenant-owned.
+- [x] Structured knowledge sebagai source utama (price/package/booking config).
+- [x] Grounding validator memastikan price/package/file/link berasal dari tenant data valid.
+- [x] Blok send file jika asset tidak valid/tidak tenant-owned.
 
 P1 checklist:
-- [ ] Version/effective-date filtering konsisten (`effective_from/until`, `is_active`).
-- [ ] Unstructured retrieval hanya saat diperlukan dan tetap tenant-scoped.
+- [x] Version/effective-date filtering konsisten (`effective_from/until`, `is_active`).
+- [x] Unstructured retrieval hanya saat diperlukan dan tetap tenant-scoped.
 
 PR candidates:
 1. `knowledge/structured-grounding-hardening`
@@ -263,13 +263,13 @@ PR candidates:
 
 ### E. `Billing` / `Plans` (Owner: Feature Gate & Lead Limit)
 P0 checklist:
-- [ ] Validasi tenant status (`trial/active/suspended/expired`) sebelum automation.
+- [x] Validasi tenant status (`trial/active/suspended/expired`) sebelum automation.
 
 P1 checklist:
-- [ ] Integrasikan plan feature gate ke runtime decision path.
-- [ ] Enforce limit WA agent aktif per plan.
-- [ ] Enforce monthly unique lead counting per billing period.
-- [ ] Saat limit habis: block automation + fallback/handoff sesuai policy.
+- [x] Integrasikan plan feature gate ke runtime decision path.
+- [x] Enforce limit WA agent aktif per plan.
+- [x] Enforce monthly unique lead counting per billing period.
+- [x] Saat limit habis: block automation + fallback/handoff sesuai policy.
 
 PR candidates:
 1. `billing/tenant-status-runtime-gate`
@@ -278,13 +278,13 @@ PR candidates:
 
 ### F. `Booking` / `Calendar` / `Invoice` (Owner: Sensitive Action Preconditions)
 P0 checklist:
-- [ ] Action permission rule untuk `send_booking_link` sesuai precondition PRD.
-- [ ] Blok claim availability tanpa calendar check valid.
-- [ ] Blok invoice resend di atas `max_send_count`.
+- [x] Action permission rule untuk `send_booking_link` sesuai precondition PRD.
+- [x] Blok claim availability tanpa calendar check valid.
+- [x] Blok invoice resend di atas `max_send_count`.
 
 P1 checklist:
-- [ ] Pastikan invoice sent memicu state `limited + dormant`.
-- [ ] Jalur fallback ke handoff saat calendar unavailable/user minta availability.
+- [x] Pastikan invoice sent memicu state `limited + dormant`.
+- [x] Jalur fallback ke handoff saat calendar unavailable/user minta availability.
 
 PR candidates:
 1. `booking/precondition-enforcement`
@@ -293,12 +293,12 @@ PR candidates:
 
 ### G. `Handoff` / `Notification` (Owner: Escalation Safety)
 P0 checklist:
-- [ ] Trigger handoff untuk reason PRD high-priority (complaint, low confidence, paused, dsb).
-- [ ] Trigger notification saat handoff/action penting/error integration.
+- [x] Trigger handoff untuk reason PRD high-priority (complaint, low confidence, paused, dsb).
+- [x] Trigger notification saat handoff/action penting/error integration.
 
 P1 checklist:
-- [ ] Lengkapi payload admin context panel sesuai field PRD.
-- [ ] Priority mapping konsisten untuk admin triage.
+- [x] Lengkapi payload admin context panel sesuai field PRD.
+- [x] Priority mapping konsisten untuk admin triage.
 
 PR candidates:
 1. `handoff/trigger-policy-matrix`
@@ -307,13 +307,13 @@ PR candidates:
 
 ### H. `Audit` / `Analytics` / `Security` (Owner: Traceability & Isolation)
 P0 checklist:
-- [ ] Pastikan audit/action logs tidak gagal di health/runtime path.
-- [ ] Internal endpoint secret enforcement (WA internal API).
-- [ ] Verifikasi tenant isolation di query/action sensitif.
+- [x] Pastikan audit/action logs tidak gagal di health/runtime path.
+- [x] Internal endpoint secret enforcement (WA internal API).
+- [x] Verifikasi tenant isolation di query/action sensitif.
 
 P1 checklist:
-- [ ] Tambah metrics yang dibutuhkan PRD dashboard tenant/superadmin.
-- [ ] Pastikan replay/audit dapat merekonstruksi turn secara deterministik.
+- [x] Tambah metrics yang dibutuhkan PRD dashboard tenant/superadmin.
+- [x] Pastikan replay/audit dapat merekonstruksi turn secara deterministik.
 
 PR candidates:
 1. `security/internal-endpoint-hardening`
@@ -338,3 +338,9 @@ Catatan:
 - Setiap PR wajib menyertakan mapping requirement PRD/TDD yang dipenuhi.
 - Setiap PR wajib menyertakan test baru/regression test terkait perubahan.
 - Hindari PR besar lintas banyak modul bila tidak diperlukan.
+
+---
+
+## 9. Closure Snapshot (2026-04-30)
+- [x] Checklist eksekusi modul `P0 -> P1 -> P2` tersinkron dengan implementasi saat ini.
+- [x] Verifikasi final lulus dengan `docker compose exec -T app php artisan test` (`288 passed`, `1318 assertions`).
