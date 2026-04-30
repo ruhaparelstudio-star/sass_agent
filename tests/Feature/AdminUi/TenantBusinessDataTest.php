@@ -291,6 +291,28 @@ class TenantBusinessDataTest extends TestCase
         $this->assertSame(['mon', 'tue', 'wed', 'thu', 'fri'], $businessHours['days'] ?? []);
     }
 
+    public function test_business_hours_timezone_must_be_valid_iana_identifier(): void
+    {
+        [$tenant, $admin] = $this->createTenantAdmin('tenant-one');
+
+        $this->actingAs($admin)
+            ->from('/tenant/business-data?step=settings')
+            ->post('/tenant/business-data/business-hours', [
+                'enabled' => true,
+                'timezone' => 'UTC+7',
+                'start_time' => '09:00',
+                'end_time' => '17:00',
+                'days' => ['mon', 'tue', 'wed', 'thu', 'fri'],
+            ])
+            ->assertRedirect('/tenant/business-data?step=settings')
+            ->assertSessionHasErrors(['timezone']);
+
+        $this->assertDatabaseMissing('calendar_settings', [
+            'tenant_id' => $tenant->id,
+            'timezone' => 'UTC+7',
+        ]);
+    }
+
     public function test_cross_tenant_booking_setting_update_is_scoped_by_context(): void
     {
         [$tenantOne, $adminOne] = $this->createTenantAdmin('tenant-one');

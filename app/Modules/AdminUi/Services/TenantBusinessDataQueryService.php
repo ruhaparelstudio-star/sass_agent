@@ -13,6 +13,8 @@ use App\Models\CalendarSetting;
 
 class TenantBusinessDataQueryService
 {
+    private const DEFAULT_TIMEZONE = 'Asia/Jakarta';
+
     /**
      * @return array<string,mixed>
      */
@@ -82,7 +84,7 @@ class TenantBusinessDataQueryService
 
         return [
             'enabled' => ($policy['enabled'] ?? false) === true,
-            'timezone' => (string) ($policy['timezone'] ?? $calendarSetting?->timezone ?? 'UTC'),
+            'timezone' => (string) ($policy['timezone'] ?? $calendarSetting?->timezone ?? self::DEFAULT_TIMEZONE),
             'start_time' => (string) ($policy['start_time'] ?? '09:00'),
             'end_time' => (string) ($policy['end_time'] ?? '17:00'),
             'days' => array_values(array_unique(array_filter(array_map(

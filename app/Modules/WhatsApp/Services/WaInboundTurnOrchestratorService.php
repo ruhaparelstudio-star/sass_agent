@@ -20,10 +20,14 @@ use App\Modules\DataKnowledge\Services\PricelistAssetResolver;
 use App\Modules\Plans\Services\FeatureGateService;
 use App\Modules\Plans\Services\MonthlyUniqueLeadLimitService;
 use Carbon\CarbonImmutable;
+use DateTimeZone;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class WaInboundTurnOrchestratorService
 {
+    private const DEFAULT_TIMEZONE = 'Asia/Jakarta';
+
     private const INTERPRETATION_INSTRUCTION = <<<'TEXT'
 Return ONLY valid JSON object (no prose, no markdown, no code fence) with exact schema:
 {
@@ -534,7 +538,8 @@ TEXT;
             ? trim((string) $policy['timezone'])
             : (is_string($calendarSetting?->timezone ?? null) && trim((string) $calendarSetting?->timezone) !== ''
                 ? trim((string) $calendarSetting?->timezone)
-                : 'UTC');
+                : self::DEFAULT_TIMEZONE);
+        $resolvedTimezone = $this->resolveTimezoneOrFallback($timezone, $tenant->id);
         $startTime = is_string($policy['start_time'] ?? null) ? trim((string) $policy['start_time']) : '09:00';
         $endTime = is_string($policy['end_time'] ?? null) ? trim((string) $policy['end_time']) : '17:00';
         $days = is_array($policy['days'] ?? null) ? $policy['days'] : ['mon', 'tue', 'wed', 'thu', 'fri'];
@@ -549,7 +554,7 @@ TEXT;
 
         $inHours = true;
         if ($enabled) {
-            $now = CarbonImmutable::now($timezone);
+            $now = CarbonImmutable::now($resolvedTimezone);
             $dayKey = strtolower($now->englishDayOfWeek);
             $dayMap = [
                 'monday' => 'mon',
@@ -579,11 +584,33 @@ TEXT;
         return [
             'enabled' => $enabled,
             'in_hours' => $inHours,
-            'timezone' => $timezone,
+            'timezone' => $resolvedTimezone,
             'start_time' => $startTime,
             'end_time' => $endTime,
             'days' => $normalizedDays,
         ];
+    }
+
+    private function resolveTimezoneOrFallback(string $timezone, int $tenantId): string
+    {
+        $candidate = trim($timezone);
+        if ($candidate === '') {
+            return self::DEFAULT_TIMEZONE;
+        }
+
+        try {
+            new DateTimeZone($candidate);
+
+            return $candidate;
+        } catch (\Throwable) {
+            Log::warning('whatsapp.business_hours.invalid_timezone_fallback', [
+                'tenant_id' => $tenantId,
+                'timezone' => $candidate,
+                'fallback_timezone' => self::DEFAULT_TIMEZONE,
+            ]);
+
+            return self::DEFAULT_TIMEZONE;
+        }
     }
 
     private function minutesFromTime(string $time): ?int

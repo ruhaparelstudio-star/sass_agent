@@ -14,6 +14,8 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class TenantBusinessDataCommandService
 {
+    private const DEFAULT_TIMEZONE = 'Asia/Jakarta';
+
     public function createServiceCatalog(int $tenantId, array $payload): ServiceCatalog
     {
         $payload['code'] = $payload['code'] ?? $this->generateServiceCatalogCode($tenantId);
@@ -171,20 +173,30 @@ class TenantBusinessDataCommandService
 
     public function upsertBusinessHoursPolicy(int $tenantId, array $payload): CalendarSetting
     {
+        $timezone = $this->resolveTimezone(
+            $payload['timezone'] ?? null,
+            null
+        );
+
         $setting = CalendarSetting::query()->firstOrCreate(
             ['tenant_id' => $tenantId],
             [
-                'timezone' => (string) ($payload['timezone'] ?? 'UTC'),
+                'timezone' => $timezone,
                 'slot_minutes' => 60,
                 'is_active' => true,
                 'rules' => [],
             ]
         );
 
+        $timezone = $this->resolveTimezone(
+            $payload['timezone'] ?? null,
+            is_string($setting->timezone) ? $setting->timezone : null
+        );
+
         $rules = is_array($setting->rules) ? $setting->rules : [];
         $rules['business_hours'] = [
             'enabled' => ($payload['enabled'] ?? false) === true,
-            'timezone' => (string) ($payload['timezone'] ?? $setting->timezone ?? 'UTC'),
+            'timezone' => $timezone,
             'start_time' => (string) ($payload['start_time'] ?? '09:00'),
             'end_time' => (string) ($payload['end_time'] ?? '17:00'),
             'days' => array_values(array_unique(array_filter(array_map(
@@ -194,11 +206,24 @@ class TenantBusinessDataCommandService
         ];
 
         $setting->update([
-            'timezone' => (string) ($payload['timezone'] ?? $setting->timezone ?? 'UTC'),
+            'timezone' => $timezone,
             'rules' => $rules,
         ]);
 
         return $setting->refresh();
+    }
+
+    private function resolveTimezone(mixed $candidate, ?string $fallback): string
+    {
+        if (is_string($candidate) && trim($candidate) !== '') {
+            return trim($candidate);
+        }
+
+        if (is_string($fallback) && trim($fallback) !== '') {
+            return trim($fallback);
+        }
+
+        return self::DEFAULT_TIMEZONE;
     }
 
     private function assertTenantRecord(int $expectedTenantId, int $recordTenantId): void

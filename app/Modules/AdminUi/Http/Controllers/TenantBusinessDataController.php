@@ -276,7 +276,7 @@ class TenantBusinessDataController extends Controller
         $tenantId = $this->resolveAuthorizedTenantId($request);
         $payload = $request->validate([
             'enabled' => ['nullable', 'boolean'],
-            'timezone' => ['required', 'string', 'max:64'],
+            'timezone' => ['required', 'string', 'max:64', 'timezone'],
             'start_time' => ['required', 'date_format:H:i'],
             'end_time' => ['required', 'date_format:H:i'],
             'days' => ['required', 'array', 'min:1'],

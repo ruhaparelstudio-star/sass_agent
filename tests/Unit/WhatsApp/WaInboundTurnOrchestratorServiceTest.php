@@ -6,6 +6,7 @@ use App\Jobs\DispatchNotificationJob;
 use App\Models\Conversation;
 use App\Models\ConversationContext;
 use App\Models\ConversationState;
+use App\Models\CalendarSetting;
 use App\Models\Handoff;
 use App\Models\KnowledgeVersion;
 use App\Models\LeadProfile;
@@ -23,6 +24,7 @@ use App\Models\WaAccount;
 use App\Models\WaInboundMessage;
 use App\Models\WaSession;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
@@ -610,6 +612,87 @@ class WaInboundTurnOrchestratorServiceTest extends TestCase
             ->firstOrFail();
 
         $this->assertSame('skipped_mode_no_auto_reply', $trace->meta['reply_dispatch']['reason'] ?? null);
+    }
+
+    public function test_inbound_turn_orchestrator_falls_back_when_business_hours_timezone_is_invalid(): void
+    {
+        Log::spy();
+        $this->bindLlmJson('{"intent":"ask_pricelist","confidence":0.91,"entities":{"package_query":"gold"}}');
+
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+
+        CalendarSetting::query()->create([
+            'tenant_id' => $tenant->id,
+            'timezone' => 'UTC+7',
+            'slot_minutes' => 60,
+            'is_active' => true,
+            'rules' => [
+                'business_hours' => [
+                    'enabled' => true,
+                    'timezone' => 'UTC+7',
+                    'start_time' => '00:00',
+                    'end_time' => '23:59',
+                    'days' => ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'],
+                ],
+            ],
+        ]);
+
+        $account = WaAccount::query()->create([
+            'tenant_id' => $tenant->id,
+            'provider' => 'meta',
+            'provider_ref' => 'acct-001',
+            'phone' => '+628111',
+            'status' => 'connected',
+            'last_payload' => ['event' => 'connected'],
+        ]);
+
+        $session = WaSession::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'provider' => 'meta',
+            'provider_ref' => 'sess-001',
+            'status' => 'active',
+            'last_payload' => ['event' => 'active'],
+        ]);
+
+        $inbound = WaInboundMessage::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'wa_session_id' => $session->id,
+            'provider' => 'meta',
+            'provider_message_id' => 'msg-timezone-001',
+            'from' => '+628111',
+            'to' => '+628222',
+            'message_type' => 'text',
+            'message_timestamp' => now(),
+            'payload' => [
+                'message' => [
+                    'conversation' => 'boleh kirim pricelist paket gold?',
+                ],
+            ],
+            'meta' => ['source' => 'test'],
+        ]);
+
+        app(WaInboundTurnOrchestratorService::class)->process($tenant, $inbound);
+
+        $this->assertDatabaseHas('decision_traces', [
+            'tenant_id' => $tenant->id,
+            'trace_key' => 'inbound_turn',
+        ]);
+        $this->assertDatabaseHas('messages', [
+            'tenant_id' => $tenant->id,
+            'direction' => 'outbound',
+        ]);
+
+        Log::shouldHaveReceived('warning')->withArgs(function (string $message, array $context): bool {
+            return $message === 'whatsapp.business_hours.invalid_timezone_fallback'
+                && ($context['timezone'] ?? null) === 'UTC+7'
+                && ($context['fallback_timezone'] ?? null) === 'Asia/Jakarta';
+        })->once();
     }
 
     private function bindLlmJson(string $json): void
