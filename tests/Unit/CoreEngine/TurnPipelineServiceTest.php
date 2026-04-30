@@ -254,6 +254,62 @@ class TurnPipelineServiceTest extends TestCase
         ], $result['action_candidates']['blocked'][0]['reasons']);
     }
 
+    public function test_ask_package_with_previous_blocked_booking_missing_package_is_normalized_to_booking_intent(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        ConversationState::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->update([
+                'active_goal' => 'booking',
+            ]);
+
+        LeadProfile::query()->where('tenant_id', $tenant->id)->where('customer_phone', $conversation->customer_phone)->update([
+            'full_name' => 'Ayu',
+        ]);
+
+        $this->bindLlmJson('{"intent":"ask_package","confidence":0.88,"entities":{"package_query":"wedding photo only"}}');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'paket wedding photo only',
+            'extract intent',
+            [
+                'previous_blocked_action' => [
+                    'action' => 'send_booking_link',
+                    'reason' => 'missing_package',
+                ],
+            ]
+        );
+
+        $this->assertSame('booking_intent', $result['intent']);
+        $this->assertSame('booking', $result['state_snapshot']['active_goal']);
+        $this->assertSame('send_booking_link', $result['action_candidates']['blocked'][0]['action']);
+        $this->assertSame([
+            'missing_event_date',
+            'missing_availability_check',
+        ], $result['action_candidates']['blocked'][0]['reasons']);
+    }
+
+    public function test_ask_package_without_previous_blocked_booking_context_remains_ask_package(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        $this->bindLlmJson('{"intent":"ask_package","confidence":0.88,"entities":{"package_query":"wedding photo only"}}');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'paket wedding photo only',
+            'extract intent'
+        );
+
+        $this->assertSame('ask_package', $result['intent']);
+        $this->assertSame('reply_safe_text', $result['action_candidates']['allowed'][0]['action']);
+    }
+
     public function test_ask_package_detail_uses_grounded_summary_when_available(): void
     {
         [$tenant, $conversation] = $this->createConversation();

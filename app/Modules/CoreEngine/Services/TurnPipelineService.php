@@ -44,7 +44,14 @@ class TurnPipelineService
             $interpretation->entities
         );
 
-        $updatedGoal = $this->goalFromIntent($interpretation->intent);
+        $finalIntent = $this->normalizeIntentForContinuation(
+            $interpretation->intent,
+            $entities,
+            $state->active_goal,
+            $context
+        );
+
+        $updatedGoal = $this->goalFromIntent($finalIntent);
         if ($updatedGoal !== null && $updatedGoal !== $state->active_goal) {
             $state->active_goal = $updatedGoal;
             $state->save();
@@ -58,7 +65,7 @@ class TurnPipelineService
             ->where('customer_phone', $conversation->customer_phone)
             ->first();
 
-        $candidate = $this->buildCandidate($interpretation->intent, $entities, $leadProfile, $context);
+        $candidate = $this->buildCandidate($finalIntent, $entities, $leadProfile, $context);
 
         $result = [
             'allowed' => [],
@@ -136,7 +143,7 @@ class TurnPipelineService
         }, $result['allowed']));
 
         $handoffSignal = $this->resolveHandoffSignal(
-            $interpretation->intent,
+            $finalIntent,
             $interpretation->confidence,
             $state->agent_mode,
             $result,
@@ -145,7 +152,7 @@ class TurnPipelineService
         $handoffRequired = $handoffSignal['required'];
 
         $response = [
-            'intent' => $interpretation->intent->value,
+            'intent' => $finalIntent->value,
             'confidence' => $interpretation->confidence,
             'entities' => $this->buildDecisionEntities($entities),
             'current_stage' => $state->current_stage,
@@ -167,7 +174,7 @@ class TurnPipelineService
             ],
             'action_candidates' => $result,
             'response_plan' => [
-                'message' => $this->buildResponsePlanMessage($interpretation->intent, $result, $tenant, $entities, $context),
+                'message' => $this->buildResponsePlanMessage($finalIntent, $result, $tenant, $entities, $context),
             ],
             'trace' => [
                 'executed' => $dispatchTrace['executed'],
@@ -192,6 +199,63 @@ class TurnPipelineService
         }
 
         return $response;
+    }
+
+    /**
+     * Normalize ambiguous package-question intents into booking continuation only when
+     * prior blocked booking context confirms we are filling required booking data.
+     *
+     * @param  array<string,mixed>  $entities
+     * @param  array<string,mixed>  $context
+     */
+    private function normalizeIntentForContinuation(
+        Intent $intent,
+        array $entities,
+        ?string $activeGoal,
+        array $context
+    ): Intent {
+        if ($intent !== Intent::AskPackage) {
+            return $intent;
+        }
+
+        if (! $this->hasBookingPackageInput($entities)) {
+            return $intent;
+        }
+
+        $previousBlockedAction = $context['previous_blocked_action'] ?? null;
+        if (! is_array($previousBlockedAction)) {
+            return $intent;
+        }
+
+        if (($previousBlockedAction['action'] ?? null) !== 'send_booking_link') {
+            return $intent;
+        }
+
+        if (($previousBlockedAction['reason'] ?? null) !== 'missing_package') {
+            return $intent;
+        }
+
+        $normalizedGoal = strtolower(trim((string) $activeGoal));
+        if ($normalizedGoal !== '' && ! in_array($normalizedGoal, ['booking', 'availability'], true)) {
+            return $intent;
+        }
+
+        return Intent::BookingIntent;
+    }
+
+    /**
+     * @param  array<string,mixed>  $entities
+     */
+    private function hasBookingPackageInput(array $entities): bool
+    {
+        $resolvedPackageCode = trim((string) ($entities['resolved_package_code'] ?? ''));
+        if ($resolvedPackageCode !== '') {
+            return true;
+        }
+
+        $packageQuery = trim((string) ($entities['package_query'] ?? ''));
+
+        return $packageQuery !== '';
     }
 
     /**
