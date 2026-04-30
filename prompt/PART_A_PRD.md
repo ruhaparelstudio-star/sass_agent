@@ -1,47 +1,66 @@
-# PART A — PRD (ENTERPRISE FINAL VERSION)
+# PART A — PRD
 
 ## SYSTEM OVERVIEW
 
-SaaS WhatsApp AI Sales Agent for Vendor Wedding.
+SaaS WhatsApp AI Sales Agent untuk vendor wedding.
 
-Multi-tenant, AI-assisted, decision-controlled system.
+Sistem adalah multi-tenant, controlled AI workflow engine, dan deterministic decision system.
+
+Sistem BUKAN chatbot generatif.
 
 ---
 
 ## CORE PRINCIPLES
 
-- AI is NOT decision maker
-- System is state-driven
-- Data is source of truth
-- Validation is mandatory
-- No hallucination allowed
+- LLM bukan otoritas final
+- Control > Intelligence
+- State-driven workflow
+- Structured data sebagai source of truth
+- Semua action wajib tervalidasi
+- Tenant isolation wajib
+- Tidak boleh ada halusinasi
 
 ---
 
-## CORE FLOW
+## MANDATORY TURN PIPELINE
 
-Inbound Message →
+Receive →
+Deduplicate →
+Tenant Load →
+State Load →
 Interpretation →
 Entity Extraction →
-State Evaluation →
+Knowledge Retrieval →
 Decision Engine →
-Validation →
-Action →
-Response
+Validators →
+Action Resolver →
+Response →
+Store Trace
+
+---
+
+## VALIDATION LAYERS (STRICT ORDER)
+
+1. PolicyValidator
+2. GroundingValidator
+3. ActionPermissionValidator
+4. ModeValidator
+
+Jika salah satu gagal, action harus diblok.
 
 ---
 
 ## USER ROLES
 
 ### Superadmin
-- Manage tenants
-- Manage plans
-- Monitor system
+- Kelola tenant
+- Kelola plan/subscription
+- Monitor sistem
 
 ### Tenant Admin
-- Manage business data
-- Handle conversations
-- Upload assets (pricelist, invoice)
+- Kelola knowledge & data bisnis tenant
+- Kelola percakapan
+- Kelola aset tenant (mis. pricelist, invoice)
 
 ---
 
@@ -49,70 +68,81 @@ Response
 
 - WhatsApp automation
 - Lead management
-- Booking system
-- Invoice system
-- Handoff system
-- Decision trace system
+- Booking workflow
+- Invoice workflow
+- Handoff workflow
+- Decision trace & auditability
 
 ---
 
-## CRITICAL RULES
+## NON-NEGOTIABLE BUSINESS RULES
 
-1. No booking without:
-   - Name
-   - Package
-   - Availability
-   - Intent
-
-2. No price without structured data
-
-3. No file without ownership validation
-
-4. No availability without calendar
+1. Booking dilarang tanpa data minimum:
+   - Nama
+   - Paket
+   - Cek ketersediaan
+   - Intent valid
+2. Harga dilarang jika tidak ada data terstruktur dari DB/knowledge resmi
+3. File/asset dilarang tanpa validasi kepemilikan tenant
+4. Ketersediaan dilarang tanpa sumber kalender yang valid
 
 ---
 
-## DATA RULES
+## DATA GOVERNANCE
 
-- Tenant isolation REQUIRED
-- Structured data = source of truth
-- Versioning must be respected
+- Isolasi tenant wajib untuk semua read/write
+- Structured data selalu mengalahkan generasi LLM
+- Versioning data/knowledge harus dihormati
+- Dilarang cross-tenant access
 
 ---
 
-## CONVERSATION SYSTEM
+## CONVERSATION STATE
 
-Must track:
+State minimal yang harus dilacak:
 - current_stage
-- active_goal
-- agent_mode
-- memory_mode
+- current_intent
+- last_user_message
+- last_agent_message
+- filled_slots
+- asked_fields
+- next_best_action
 
 ---
 
-## ACTION RULES
+## DECISION & ACTION POLICY
 
-All actions must:
-- Pass validators
-- Be allowed by tenant
-- Be valid for mode
+- Output classifier bukan keputusan final
+- Keputusan final wajib mempertimbangkan:
+  - Intent
+  - Entities
+  - State
+  - Policy
+  - Knowledge
+  - Permission
+  - Mode
+- Semua action wajib lolos validator sebelum dieksekusi
 
 ---
 
-## SAFETY POLICY
+## FAILURE HANDLING
 
-GLOBAL FORBIDDEN:
+- Invalid JSON: safe fallback response
+- Missing data: block action
+- Low confidence: handoff
+- System error: safe fallback
+
+---
+
+## SAFETY POLICY (GLOBAL FORBIDDEN)
+
 - Hallucinated response
 - Unauthorized action
-- Cross-tenant data
-- Invalid booking
+- Cross-tenant data leakage
+- Invalid booking execution
 
 ---
 
 ## FINAL PRINCIPLE
 
-SYSTEM must behave as:
-
-CONTROLLED WORKFLOW ENGINE
-
-NOT AI chatbot
+Sistem harus selalu berperilaku sebagai controlled workflow engine yang deterministic, aman, dan tervalidasi.

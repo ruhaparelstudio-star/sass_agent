@@ -45,7 +45,8 @@ class WaSyncService
         return match ($from) {
             WaAccountStatus::Disconnected => in_array($to, [WaAccountStatus::Connecting, WaAccountStatus::Connected], true),
             WaAccountStatus::Connecting => in_array($to, [WaAccountStatus::Connected, WaAccountStatus::Disconnected], true),
-            WaAccountStatus::Connected => $to === WaAccountStatus::Disconnected,
+            // During reconnect flow, gateway can emit connected -> connecting before open.
+            WaAccountStatus::Connected => in_array($to, [WaAccountStatus::Connecting, WaAccountStatus::Disconnected], true),
         };
     }
 
@@ -57,8 +58,10 @@ class WaSyncService
 
         return match ($from) {
             WaSessionStatus::Pending => in_array($to, [WaSessionStatus::Active, WaSessionStatus::Closed], true),
-            WaSessionStatus::Active => $to === WaSessionStatus::Closed,
-            WaSessionStatus::Closed => false,
+            // During reconnect, gateway can emit active -> pending before open/close.
+            WaSessionStatus::Active => in_array($to, [WaSessionStatus::Pending, WaSessionStatus::Closed], true),
+            // Gateway can reopen or move closed session back to pending during reconnect.
+            WaSessionStatus::Closed => in_array($to, [WaSessionStatus::Pending, WaSessionStatus::Active], true),
         };
     }
 

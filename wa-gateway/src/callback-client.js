@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 import { config } from './config.js';
-import { validateStatusPayload } from './status-contract.js';
+import { validateInboundPayload, validateStatusPayload } from './status-contract.js';
 
 const buildHeaders = ({ internalSecret, internalAuthToken }) => {
   const headers = {
@@ -39,6 +39,20 @@ const toSessionBody = (validated) => ({
   ...(validated.session_meta ? { meta: validated.session_meta } : {}),
 });
 
+const toInboundBody = (validated) => ({
+  tenant_id: validated.tenant_id,
+  provider: validated.provider,
+  provider_message_id: validated.provider_message_id,
+  wa_account_provider_ref: validated.account_provider_ref,
+  ...(validated.session_provider_ref ? { wa_session_provider_ref: validated.session_provider_ref } : {}),
+  from: validated.from,
+  to: validated.to,
+  message_type: validated.message_type,
+  message_timestamp: validated.message_timestamp,
+  payload: validated.payload,
+  ...(validated.meta ? { meta: validated.meta } : {}),
+});
+
 export const createCallbackClient = ({
   httpClient = axios,
   baseUrl = config.laravelBaseUrl,
@@ -67,6 +81,18 @@ export const createCallbackClient = ({
         account: accountResponse.data,
         session: sessionResponse.data,
       };
+    },
+
+    async sendInboundMessage(payload) {
+      const validated = validateInboundPayload(payload);
+
+      const response = await httpClient.post(
+        `${baseUrl}/api/internal/whatsapp/inbound-messages`,
+        toInboundBody(validated),
+        { headers }
+      );
+
+      return response.data;
     },
   };
 };

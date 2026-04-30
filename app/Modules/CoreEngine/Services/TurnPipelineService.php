@@ -16,6 +16,8 @@ use App\Modules\Validation\Contracts\PolicyValidator;
 
 class TurnPipelineService
 {
+    private const LOW_CONFIDENCE_THRESHOLD = 0.45;
+
     public function __construct(
         private readonly InterpretationService $interpretationService,
         private readonly ActionDispatcherService $actionDispatcherService,
@@ -117,9 +119,33 @@ class TurnPipelineService
             }
         }
 
+        $blockedActions = array_values(array_map(function (array $row): array {
+            return [
+                'action' => (string) ($row['action'] ?? ''),
+                'reason' => (string) (($row['reasons'][0] ?? null) ?? 'blocked'),
+            ];
+        }, $result['blocked']));
+
+        $allowedActions = array_values(array_map(
+            fn (array $row): string => (string) ($row['action'] ?? ''),
+            $result['allowed']
+        ));
+
+        $handoffRequired = $this->shouldRequireHandoff($interpretation->confidence, $result);
+
         $response = [
             'intent' => $interpretation->intent->value,
+            'confidence' => $interpretation->confidence,
             'entities' => $entities,
+            'current_stage' => $state->current_stage,
+            'active_goal' => $state->active_goal,
+            'decision' => $this->deriveDecisionKeyword($result, $handoffRequired),
+            'allowed_actions' => $allowedActions,
+            'blocked_actions' => $blockedActions,
+            'handoff_required' => $handoffRequired,
+            'notification_required' => $handoffRequired,
+            'grounding_refs' => $this->extractGroundingRefs($context['grounding'] ?? null),
+            'reply_strategy' => $handoffRequired ? 'handoff_safe' : 'short_contextual_question',
             'state_snapshot' => [
                 'current_stage' => $state->current_stage,
                 'active_goal' => $state->active_goal,
@@ -136,6 +162,7 @@ class TurnPipelineService
                 'status' => $dispatchTrace['status'],
                 'reason' => $dispatchTrace['reason'],
                 'validator_order' => ['policy', 'grounding', 'permission', 'mode'],
+                'fallback_reason' => $interpretation->fallbackReason,
                 'dormant_retrieval' => [
                     'triggered' => $dormantRetrieval['triggered'],
                     'status' => $dormantRetrieval['status'],
@@ -241,6 +268,14 @@ class TurnPipelineService
 
             if ($field === 'budget' && array_key_exists('budget_amount', $current)) {
                 $merged['budget_amount'] = $current['budget_amount'];
+            }
+
+            if ($field === 'customer_name' && array_key_exists('customer_name', $current)) {
+                $merged['customer_name'] = $current['customer_name'];
+            }
+
+            if ($field === 'location' && array_key_exists('location', $current)) {
+                $merged['location'] = $current['location'];
             }
         }
 
@@ -387,5 +422,69 @@ class TurnPipelineService
         }
 
         return $resolved;
+    }
+
+    private function shouldRequireHandoff(float $confidence, array $candidates): bool
+    {
+        if ($confidence < self::LOW_CONFIDENCE_THRESHOLD) {
+            return true;
+        }
+
+        $blocked = $candidates['blocked'] ?? [];
+        if (! is_array($blocked) || $blocked === []) {
+            return false;
+        }
+
+        $firstReasons = $blocked[0]['reasons'] ?? [];
+        if (! is_array($firstReasons)) {
+            return false;
+        }
+
+        return in_array('policy_tenant_blocked', $firstReasons, true)
+            || in_array('policy_global_blocked', $firstReasons, true)
+            || in_array('policy_business_hours_blocked', $firstReasons, true);
+    }
+
+    private function deriveDecisionKeyword(array $candidates, bool $handoffRequired): string
+    {
+        if ($handoffRequired) {
+            return 'handoff_required';
+        }
+
+        if (($candidates['allowed'] ?? []) !== []) {
+            return 'allow_action';
+        }
+
+        return 'ask_missing_required_info';
+    }
+
+    /**
+     * @return array<int,string>
+     */
+    private function extractGroundingRefs(mixed $grounding): array
+    {
+        if (! is_array($grounding)) {
+            return [];
+        }
+
+        $refs = [];
+        foreach ($grounding as $key => $value) {
+            if (! is_string($key)) {
+                continue;
+            }
+
+            if (is_bool($value) && $value === true) {
+                $refs[] = $key;
+                continue;
+            }
+
+            if (is_array($value) && (($value['is_grounded'] ?? false) === true)) {
+                $refs[] = $key;
+            }
+        }
+
+        sort($refs);
+
+        return $refs;
     }
 }

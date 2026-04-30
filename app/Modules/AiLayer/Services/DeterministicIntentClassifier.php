@@ -35,8 +35,12 @@ class DeterministicIntentClassifier implements IntentClassifierContract
         }
 
         $packageQuery = $this->normalizeText($decoded['entities']['package_query'] ?? null);
+        $customerName = $this->normalizeName($decoded['entities']['customer_name'] ?? ($decoded['entities']['name'] ?? null));
+        $eventType = $this->normalizeText($decoded['entities']['event_type'] ?? null);
         $eventDateIso = $this->parseEventDateIso($decoded['entities']['event_date'] ?? null);
+        $location = $this->normalizeText($decoded['entities']['location'] ?? null);
         $budgetAmount = $this->parseBudgetAmount($decoded['entities']['budget'] ?? null);
+        $invoiceReference = $this->normalizeText($decoded['entities']['invoice_reference'] ?? null);
         [$isCorrection, $correctedFields] = $this->detectCorrection(
             $userMessage,
             $decoded['entities']
@@ -51,8 +55,12 @@ class DeterministicIntentClassifier implements IntentClassifierContract
                 'package_query' => $packageQuery,
                 'resolved_package_code' => $resolvedCode,
                 'resolved_package_name' => $resolvedName,
+                'customer_name' => $customerName,
+                'event_type' => $eventType,
                 'event_date_iso' => $eventDateIso,
+                'location' => $location,
                 'budget_amount' => $budgetAmount,
+                'invoice_reference' => $invoiceReference,
                 'is_correction' => $isCorrection,
                 'corrected_fields' => $correctedFields,
             ],
@@ -90,6 +98,17 @@ class DeterministicIntentClassifier implements IntentClassifierContract
         }
 
         $normalized = mb_strtolower(trim($value));
+
+        return $normalized === '' ? null : $normalized;
+    }
+
+    private function normalizeName(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $normalized = trim($value);
 
         return $normalized === '' ? null : $normalized;
     }

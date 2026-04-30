@@ -6,6 +6,7 @@ use App\Enums\WaAccountStatus;
 use App\Enums\WaSessionStatus;
 use App\Http\Controllers\Controller;
 use App\Models\Tenant;
+use App\Modules\WhatsApp\Services\WaInboundTurnOrchestratorService;
 use App\Modules\WhatsApp\Services\WaOutboundService;
 use App\Modules\WhatsApp\Services\WaSyncService;
 use Illuminate\Http\JsonResponse;
@@ -16,7 +17,8 @@ class WaInternalController extends Controller
 {
     public function __construct(
         private readonly WaSyncService $waSyncService,
-        private readonly WaOutboundService $waOutboundService
+        private readonly WaOutboundService $waOutboundService,
+        private readonly WaInboundTurnOrchestratorService $waInboundTurnOrchestratorService,
     ) {}
 
     public function upsertAccount(Request $request): JsonResponse
@@ -79,6 +81,7 @@ class WaInternalController extends Controller
         $this->waSyncService->assertTenantScope($request->user(), $tenant);
 
         $inboundMessage = $this->waSyncService->storeInboundMessage($tenant, $payload);
+        $this->waInboundTurnOrchestratorService->process($tenant, $inboundMessage);
 
         return response()->json(['data' => $inboundMessage]);
     }

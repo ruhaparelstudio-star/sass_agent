@@ -67,6 +67,9 @@ Route::middleware('auth')->group(function (): void {
     Route::get('/tenant/dashboard', [TenantDashboardController::class, 'show']);
     Route::get('/tenant/inbox', [TenantConversationInboxController::class, 'show']);
     Route::get('/tenant/whatsapp/qr', [TenantWhatsappQrController::class, 'show']);
+    Route::post('/tenant/whatsapp/qr/connect', [TenantWhatsappQrController::class, 'connect']);
+    Route::post('/tenant/whatsapp/agents/{waAccount}/disconnect', [TenantWhatsappQrController::class, 'disconnect']);
+    Route::post('/tenant/whatsapp/agents/{waAccount}/reconnect', [TenantWhatsappQrController::class, 'reconnect']);
     Route::get('/tenant/whatsapp/qr/image', [TenantWhatsappQrController::class, 'image']);
     Route::post('/tenant/inbox/{conversation}/handoff/{handoff}/resolve', [TenantConversationInboxController::class, 'resolveHandoff']);
     Route::post('/tenant/inbox/{conversation}/handoff/{handoff}/resume', [TenantConversationInboxController::class, 'resumeAi']);

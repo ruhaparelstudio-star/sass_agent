@@ -235,7 +235,7 @@ class WaInternalApiTest extends TestCase
             'status' => 'connecting',
             'phone' => '+628155555555',
             'payload' => ['event' => 'illegal'],
-        ])->assertStatus(422);
+        ])->assertOk();
     }
 
     public function test_session_upsert_is_tenant_scoped_and_deduplicated(): void

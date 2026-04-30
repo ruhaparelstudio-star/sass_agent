@@ -1,7 +1,7 @@
 import express from 'express';
 import QRCode from 'qrcode';
 
-import { connectTenantSession } from './baileys-manager.js';
+import { connectTenantSession, disconnectTenantSessions, sendTenantMessage } from './baileys-manager.js';
 import { createCallbackClient } from './callback-client.js';
 import { clearTenantQr, getTenantQr, setTenantQr } from './qr-store.js';
 import { validateStatusPayload } from './status-contract.js';
@@ -111,6 +111,82 @@ export const createApp = ({ callbackClient = createCallbackClient() } = {}) => {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       return res.status(500).json({
+        status: 'error',
+        message,
+      });
+    }
+  });
+
+  app.post('/sessions/disconnect', async (req, res) => {
+    const source = req.body ?? {};
+    const tenantId = Number.parseInt(String(source.tenant_id ?? ''), 10);
+    const provider = typeof source.provider === 'string' && source.provider.trim() !== '' ? source.provider.trim() : null;
+    const accountProviderRef = typeof source.account_provider_ref === 'string' && source.account_provider_ref.trim() !== ''
+      ? source.account_provider_ref.trim()
+      : null;
+
+    if (!Number.isInteger(tenantId) || tenantId <= 0) {
+      return res.status(422).json({
+        status: 'error',
+        message: 'tenant_id wajib integer positif.',
+      });
+    }
+
+    try {
+      const result = await disconnectTenantSessions({
+        tenantId,
+        provider,
+        accountProviderRef,
+      });
+
+      return res.status(200).json({
+        status: 'ok',
+        tenant_id: tenantId,
+        provider,
+        account_provider_ref: accountProviderRef,
+        ...result,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return res.status(500).json({
+        status: 'error',
+        message,
+      });
+    }
+  });
+
+  app.post('/outbound', async (req, res) => {
+    const source = req.body ?? {};
+    const tenantId = Number.parseInt(String(source.tenant_id ?? ''), 10);
+    const to = typeof source.to === 'string' ? source.to : '';
+    const messageType = typeof source.message_type === 'string' ? source.message_type : '';
+    const payload = source.payload ?? {};
+    const sessionProviderRef = typeof source.session_provider_ref === 'string' ? source.session_provider_ref : null;
+
+    if (!Number.isInteger(tenantId) || tenantId <= 0) {
+      return res.status(422).json({
+        status: 'error',
+        message: 'tenant_id wajib integer positif.',
+      });
+    }
+
+    try {
+      const result = await sendTenantMessage({
+        tenantId,
+        to,
+        messageType,
+        payload,
+        sessionProviderRef,
+      });
+
+      return res.status(200).json({
+        status: 'sent',
+        ...result,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      const statusCode = message.includes('wajib') || message.includes('didukung') ? 422 : 500;
+      return res.status(statusCode).json({
         status: 'error',
         message,
       });

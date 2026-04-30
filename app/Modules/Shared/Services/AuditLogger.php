@@ -4,6 +4,7 @@ namespace App\Modules\Shared\Services;
 
 use App\Models\AuditLog;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 
 class AuditLogger
 {
@@ -19,6 +20,10 @@ class AuditLogger
         string $endpoint,
         array $context = []
     ): void {
+        if (! Schema::hasTable('audit_logs')) {
+            return;
+        }
+
         AuditLog::query()->create([
             'event_key' => $eventKey,
             'tenant_id' => $tenantId,

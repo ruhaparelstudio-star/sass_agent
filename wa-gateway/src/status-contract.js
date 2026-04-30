@@ -62,3 +62,37 @@ export const validateStatusPayload = (payload) => {
   };
 };
 
+export const validateInboundPayload = (payload) => {
+  const source = requireObject(payload, 'payload');
+
+  const tenantId = requireInteger(source.tenant_id, 'tenant_id');
+  const provider = requireString(source.provider, 'provider');
+  const accountProviderRef = requireString(source.account_provider_ref, 'account_provider_ref');
+  const providerMessageId = requireString(source.provider_message_id, 'provider_message_id');
+  const from = requireString(source.from, 'from');
+  const to = requireString(source.to, 'to');
+  const messageType = requireString(source.message_type, 'message_type');
+  const messageTimestamp = source.message_timestamp;
+  const rawPayload = requireObject(source.payload, 'payload');
+
+  if (messageTimestamp === undefined || messageTimestamp === null || messageTimestamp === '') {
+    throw new Error('message_timestamp is required.');
+  }
+
+  return {
+    tenant_id: tenantId,
+    provider,
+    account_provider_ref: accountProviderRef,
+    session_provider_ref:
+      typeof source.session_provider_ref === 'string' && source.session_provider_ref.trim() !== ''
+        ? source.session_provider_ref.trim()
+        : undefined,
+    provider_message_id: providerMessageId,
+    from,
+    to,
+    message_type: messageType,
+    message_timestamp: messageTimestamp,
+    payload: rawPayload,
+    meta: isObject(source.meta) ? source.meta : undefined,
+  };
+};
