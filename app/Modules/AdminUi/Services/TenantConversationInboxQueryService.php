@@ -141,6 +141,7 @@ class TenantConversationInboxQueryService
                 'conversation_id',
                 'direction',
                 'message_type',
+                'body',
                 'content',
                 'grounding_refs',
                 'decision_trace_id',
@@ -163,6 +164,7 @@ class TenantConversationInboxQueryService
                     'conversation_id' => $message->conversation_id,
                     'direction' => (string) $message->direction->value,
                     'message_type' => $message->message_type ?? 'text',
+                    'body' => $message->body,
                     'content' => $message->content,
                     'grounding_refs' => $message->grounding_refs
                         ?? $trace?->grounding_refs_json

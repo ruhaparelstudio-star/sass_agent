@@ -13,6 +13,7 @@ class Message extends Model
         'conversation_id',
         'direction',
         'message_type',
+        'body',
         'content',
         'raw_payload',
         'grounding_refs',
@@ -33,6 +34,17 @@ class Message extends Model
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);
+    }
+
+    public function getBodyAttribute(): string
+    {
+        $raw = $this->attributes['body'] ?? null;
+
+        if (is_string($raw) && trim($raw) !== '') {
+            return $raw;
+        }
+
+        return (string) $this->content;
     }
 
     public function conversation(): BelongsTo

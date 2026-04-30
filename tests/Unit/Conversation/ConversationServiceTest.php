@@ -116,6 +116,7 @@ class ConversationServiceTest extends TestCase
             'conversation_id' => $conversation->id,
             'direction' => 'inbound',
             'message_type' => 'text',
+            'body' => 'Halo, saya mau tanya paket.',
             'content' => 'Halo, saya mau tanya paket.',
         ]);
 

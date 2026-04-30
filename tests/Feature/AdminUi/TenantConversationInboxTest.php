@@ -160,6 +160,7 @@ class TenantConversationInboxTest extends TestCase
                 ->where('handoffs.0.id', $pendingHandoff->id)
                 ->where('handoffs.0.can_resolve_handoff', true)
                 ->where('handoffs.0.can_resume_ai', false)
+                ->where('messages.0.body', 'Halo, saya mau tanya paket.')
                 ->where('messages.0.message_type', 'text')
                 ->where('messages.0.trace.validators.order.0', 'policy')
             );

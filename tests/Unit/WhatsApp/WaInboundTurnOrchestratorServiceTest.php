@@ -75,6 +75,12 @@ class WaInboundTurnOrchestratorServiceTest extends TestCase
             ->firstOrFail();
 
         $decision = $trace->meta['decision'] ?? [];
+        $inboundMessage = \App\Models\Message::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('direction', 'inbound')
+            ->latest('id')
+            ->firstOrFail();
+        $this->assertSame($inboundMessage->id, $trace->message_id);
         $this->assertSame($decision, $trace->decision_json);
         $this->assertSame($decision['blocked_actions'] ?? [], $trace->blocked_actions_json);
         $this->assertSame($decision['grounding_refs'] ?? [], $trace->grounding_refs_json);

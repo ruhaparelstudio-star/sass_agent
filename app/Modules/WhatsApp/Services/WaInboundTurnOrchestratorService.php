@@ -176,7 +176,7 @@ class WaInboundTurnOrchestratorService
                 ],
             ]);
 
-            $outboundConversationMessage = $this->conversationService->storeMessage($conversation, $tenant, MessageDirection::Outbound, $replyText, [
+            $this->conversationService->storeMessage($conversation, $tenant, MessageDirection::Outbound, $replyText, [
                 'source' => 'whatsapp_turn_pipeline',
                 'wa_inbound_message_id' => $inboundMessage->id,
                 'dispatch_status' => $dispatchResult['status'] ?? null,
@@ -184,8 +184,6 @@ class WaInboundTurnOrchestratorService
                 'handoff_dispatch_status' => $handoffDispatch['status'] ?? null,
                 'handoff_dispatch_reason' => $handoffDispatch['reason'] ?? null,
             ], 'text', null, $pipeline['grounding_refs'] ?? [], $trace->id);
-
-            $trace->forceFill(['message_id' => $outboundConversationMessage->id])->save();
         });
     }
 

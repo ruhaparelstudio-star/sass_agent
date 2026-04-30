@@ -83,6 +83,7 @@ class ConversationService
             'conversation_id' => $conversation->id,
             'direction' => $direction,
             'message_type' => trim($messageType) !== '' ? trim($messageType) : 'text',
+            'body' => $normalizedContent,
             'content' => $normalizedContent,
             'raw_payload' => $rawPayload,
             'grounding_refs' => $groundingRefs,
