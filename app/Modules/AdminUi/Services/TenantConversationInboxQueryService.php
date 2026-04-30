@@ -9,9 +9,14 @@ use App\Models\Invoice;
 use App\Models\LeadProfile;
 use App\Models\Message;
 use App\Models\TenantAsset;
+use App\Modules\Conversation\Services\ConversationSummaryService;
 
 class TenantConversationInboxQueryService
 {
+    public function __construct(
+        private readonly ConversationSummaryService $conversationSummaryService,
+    ) {}
+
     /**
      * @return array{conversationList:array<int,array<string,mixed>>,selectedConversation:?array<string,mixed>,messages:array<int,array<string,mixed>>,handoffs:array<int,array<string,mixed>>,contextPanel:array<string,mixed>,invoiceAssets:array<int,array<string,mixed>>,invoices:array<int,array<string,mixed>>}
      */
@@ -232,6 +237,7 @@ class TenantConversationInboxQueryService
             ->where('conversation_id', $selectedConversation->id)
             ->latest('id')
             ->first();
+        $summarySnapshot = $this->conversationSummaryService->getValidSummarySnapshot($tenantId, $selectedConversation->id);
 
         return [
             'conversationList' => $conversationList,
@@ -276,7 +282,9 @@ class TenantConversationInboxQueryService
                     'memory_mode',
                 ]),
                 'context' => [
-                    'summary' => $latestContext?->summary,
+                    'summary' => $summarySnapshot['summary'] ?? $latestContext?->summary,
+                    'summary_structured' => $summarySnapshot['summary_structured'] ?? null,
+                    'summary_source' => $summarySnapshot['summary_source'] ?? ($latestContext?->summary !== null ? 'conversation_context' : null),
                     'reason' => $latestContext?->reason,
                     'recommended_next_action' => $latestContext?->recommended_next_action,
                 ],
@@ -287,7 +295,7 @@ class TenantConversationInboxQueryService
     }
 
     /**
-     * @return array{lead:null,state:null,context:array{summary:null,reason:null,recommended_next_action:null}}
+     * @return array{lead:null,state:null,context:array{summary:null,summary_structured:null,summary_source:null,reason:null,recommended_next_action:null}}
      */
     private function emptyContextPanel(): array
     {
@@ -296,6 +304,8 @@ class TenantConversationInboxQueryService
             'state' => null,
             'context' => [
                 'summary' => null,
+                'summary_structured' => null,
+                'summary_source' => null,
                 'reason' => null,
                 'recommended_next_action' => null,
             ],

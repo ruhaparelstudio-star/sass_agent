@@ -6,6 +6,7 @@ use App\Jobs\DispatchNotificationJob;
 use App\Models\Conversation;
 use App\Models\ConversationContext;
 use App\Models\ConversationState;
+use App\Models\ConversationSummary;
 use App\Models\CalendarSetting;
 use App\Models\Handoff;
 use App\Models\KnowledgeVersion;
@@ -58,6 +59,36 @@ class WaInboundTurnOrchestratorServiceTest extends TestCase
             'provider_ref' => 'sess-001',
             'status' => 'active',
             'last_payload' => ['event' => 'active'],
+        ]);
+        $conversation = Conversation::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'customer_phone' => '628111',
+            'status' => 'open',
+            'current_stage' => 'collecting_service',
+            'active_goal' => 'qualification',
+            'agent_mode' => 'assistant',
+            'memory_mode' => 'short',
+        ]);
+        ConversationState::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'current_stage' => 'collecting_service',
+            'active_goal' => 'qualification',
+            'agent_mode' => 'assistant',
+            'memory_mode' => 'short',
+        ]);
+        ConversationSummary::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'message_count' => 25,
+            'summary' => 'Ringkasan memory untuk handoff.',
+            'summary_json' => [
+                'lead_profile' => ['name' => 'Aris', 'phone' => '628111'],
+                'need' => 'qualification',
+            ],
+            'retention_until' => now()->addDays(5),
+            'summarized_at' => now(),
         ]);
 
         $inbound = WaInboundMessage::query()->create([
@@ -446,6 +477,17 @@ class WaInboundTurnOrchestratorServiceTest extends TestCase
         $this->assertSame('high', $handoff->context['priority'] ?? null);
         $this->assertSame('inbound_turn_pipeline', $handoff->context['source'] ?? null);
         $this->assertSame($inbound->id, $handoff->context['inbound_message_id'] ?? null);
+        $this->assertIsString($handoff->context['summary'] ?? null);
+        $this->assertNotSame('', trim((string) ($handoff->context['summary'] ?? '')));
+        $this->assertContains($handoff->context['summary_source'] ?? null, ['conversation_summary', 'conversation_context']);
+        $this->assertArrayHasKey('active_goal', $handoff->context ?? []);
+        $this->assertArrayHasKey('current_stage', $handoff->context ?? []);
+        $this->assertArrayHasKey('recommended_next_action', $handoff->context ?? []);
+        $this->assertTrue(
+            ! array_key_exists('summary_structured', (array) $handoff->context)
+            || is_array($handoff->context['summary_structured'])
+            || $handoff->context['summary_structured'] === null
+        );
 
         $this->assertSame($handoff->id, $notification->handoff_id);
         $this->assertSame('handoff_created', $notification->type);

@@ -5,6 +5,7 @@ namespace Tests\Feature\AdminUi;
 use App\Models\Conversation;
 use App\Models\ConversationContext;
 use App\Models\ConversationState;
+use App\Models\ConversationSummary;
 use App\Models\DecisionTrace;
 use App\Models\Handoff;
 use App\Models\Invoice;
@@ -101,6 +102,18 @@ class TenantConversationInboxTest extends TestCase
             'reason' => 'low_confidence',
             'recommended_next_action' => 'booking',
         ]);
+        ConversationSummary::query()->create([
+            'tenant_id' => $tenantOne->id,
+            'conversation_id' => $selectedConversation->id,
+            'message_count' => 22,
+            'summary' => 'Memory summary terbaru untuk lead wedding.',
+            'summary_json' => [
+                'lead_profile' => ['name' => 'Rina Utami', 'phone' => '+620001'],
+                'need' => 'booking',
+            ],
+            'retention_until' => now()->addDays(7),
+            'summarized_at' => now(),
+        ]);
 
         $inboundMessage = Message::query()->create([
             'tenant_id' => $tenantOne->id,
@@ -155,6 +168,9 @@ class TenantConversationInboxTest extends TestCase
                 ->component('Tenant/Inbox', false)
                 ->where('selectedConversation.id', $selectedConversation->id)
                 ->where('contextPanel.lead.full_name', 'Rina Utami')
+                ->where('contextPanel.context.summary', 'Memory summary terbaru untuk lead wedding.')
+                ->where('contextPanel.context.summary_source', 'conversation_summary')
+                ->where('contextPanel.context.summary_structured.need', 'booking')
                 ->where('contextPanel.context.reason', 'low_confidence')
                 ->where('contextPanel.context.recommended_next_action', 'booking')
                 ->where('handoffs.0.id', $pendingHandoff->id)
@@ -163,6 +179,61 @@ class TenantConversationInboxTest extends TestCase
                 ->where('messages.0.body', 'Halo, saya mau tanya paket.')
                 ->where('messages.0.message_type', 'text')
                 ->where('messages.0.trace.validators.order.0', 'policy')
+            );
+    }
+
+    public function test_inbox_context_summary_falls_back_to_conversation_context_when_memory_summary_is_expired(): void
+    {
+        [$tenant, $tenantAdmin] = $this->createTenantAdmin('tenant-one');
+
+        $conversation = Conversation::query()->create([
+            'tenant_id' => $tenant->id,
+            'customer_phone' => '+620300',
+            'status' => 'open',
+        ]);
+
+        ConversationState::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'current_stage' => 'qualified',
+            'active_goal' => 'booking',
+            'agent_mode' => 'assistant',
+            'memory_mode' => 'short',
+        ]);
+
+        ConversationContext::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'summary' => 'Fallback context summary.',
+            'reason' => 'decision_executed',
+            'recommended_next_action' => 'booking',
+        ]);
+
+        ConversationSummary::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'message_count' => 20,
+            'summary' => 'Expired memory summary should not be used.',
+            'summary_json' => ['need' => 'pricing'],
+            'retention_until' => now()->subMinute(),
+            'summarized_at' => now(),
+        ]);
+
+        Message::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'direction' => 'inbound',
+            'content' => 'Halo kak.',
+            'meta' => null,
+        ]);
+
+        $this->actingAs($tenantAdmin)
+            ->get('/tenant/inbox?conversation_id='.$conversation->id)
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('contextPanel.context.summary', 'Fallback context summary.')
+                ->where('contextPanel.context.summary_source', 'conversation_context')
+                ->where('contextPanel.context.summary_structured', null)
             );
     }
 

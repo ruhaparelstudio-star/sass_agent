@@ -12,6 +12,7 @@ class ConversationSummary extends Model
         'conversation_id',
         'message_count',
         'summary',
+        'summary_json',
         'retention_until',
         'summarized_at',
     ];
@@ -19,6 +20,7 @@ class ConversationSummary extends Model
     protected function casts(): array
     {
         return [
+            'summary_json' => 'array',
             'retention_until' => 'datetime',
             'summarized_at' => 'datetime',
         ];

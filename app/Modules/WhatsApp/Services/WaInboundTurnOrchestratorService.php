@@ -14,6 +14,7 @@ use App\Models\WaInboundMessage;
 use App\Modules\Action\Services\ActionDispatcherService;
 use App\Modules\Calendar\Services\CalendarAvailabilityService;
 use App\Modules\Conversation\Services\ConversationService;
+use App\Modules\Conversation\Services\ConversationSummaryService;
 use App\Modules\CoreEngine\Services\TurnPipelineService;
 use App\Modules\DataKnowledge\Services\CatalogResolver;
 use App\Modules\DataKnowledge\Services\PricelistAssetResolver;
@@ -79,6 +80,7 @@ TEXT;
         private readonly PricelistAssetResolver $pricelistAssetResolver,
         private readonly FeatureGateService $featureGateService,
         private readonly MonthlyUniqueLeadLimitService $monthlyUniqueLeadLimitService,
+        private readonly ConversationSummaryService $conversationSummaryService,
     ) {}
 
     public function process(Tenant $tenant, WaInboundMessage $inboundMessage): void
@@ -895,6 +897,11 @@ TEXT;
         $priority = is_string($pipeline['handoff_priority'] ?? null) && trim((string) $pipeline['handoff_priority']) !== ''
             ? (string) $pipeline['handoff_priority']
             : 'high';
+        $state = ConversationState::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->first();
+        $summarySnapshot = $this->resolveHandoffSummarySnapshot($tenant, $conversation);
 
         $candidate = [
             'action' => 'handoff_to_human',
@@ -911,6 +918,12 @@ TEXT;
                         'intent' => $pipeline['intent'] ?? null,
                         'confidence' => $pipeline['confidence'] ?? null,
                         'blocked_actions' => $pipeline['blocked_actions'] ?? [],
+                        'summary' => $summarySnapshot['summary'],
+                        'summary_structured' => $summarySnapshot['summary_structured'],
+                        'summary_source' => $summarySnapshot['summary_source'],
+                        'current_stage' => $state?->current_stage ?? ($pipeline['current_stage'] ?? null),
+                        'active_goal' => $state?->active_goal ?? ($pipeline['active_goal'] ?? null),
+                        'recommended_next_action' => $state?->active_goal ?? ($pipeline['active_goal'] ?? null),
                     ],
                 ],
             ],
@@ -921,6 +934,33 @@ TEXT;
         return [
             'status' => (string) ($result['status'] ?? 'blocked'),
             'reason' => is_string($result['reason'] ?? null) ? $result['reason'] : null,
+        ];
+    }
+
+    /**
+     * @return array{summary:?string,summary_structured:?array<string,mixed>,summary_source:?string}
+     */
+    private function resolveHandoffSummarySnapshot(Tenant $tenant, Conversation $conversation): array
+    {
+        $summarySnapshot = $this->conversationSummaryService->getValidSummarySnapshot($tenant->id, $conversation->id);
+        if (is_array($summarySnapshot)) {
+            return [
+                'summary' => is_string($summarySnapshot['summary'] ?? null) ? $summarySnapshot['summary'] : null,
+                'summary_structured' => is_array($summarySnapshot['summary_structured'] ?? null) ? $summarySnapshot['summary_structured'] : null,
+                'summary_source' => is_string($summarySnapshot['summary_source'] ?? null) ? $summarySnapshot['summary_source'] : 'conversation_summary',
+            ];
+        }
+
+        $latestContext = ConversationContext::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->latest('id')
+            ->first();
+
+        return [
+            'summary' => is_string($latestContext?->summary ?? null) ? $latestContext->summary : null,
+            'summary_structured' => null,
+            'summary_source' => $latestContext?->summary !== null ? 'conversation_context' : null,
         ];
     }
 

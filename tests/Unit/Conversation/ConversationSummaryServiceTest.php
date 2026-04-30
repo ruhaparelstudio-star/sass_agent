@@ -88,6 +88,14 @@ class ConversationSummaryServiceTest extends TestCase
 
         $this->assertNotSame('', trim($first->summary));
         $this->assertSame(20, $first->message_count);
+        $this->assertIsArray($first->summary_json);
+        $this->assertArrayHasKey('lead_profile', $first->summary_json ?? []);
+        $this->assertArrayHasKey('need', $first->summary_json ?? []);
+        $this->assertArrayHasKey('entities', $first->summary_json ?? []);
+        $this->assertArrayHasKey('objection', $first->summary_json ?? []);
+        $this->assertArrayHasKey('last_stage', $first->summary_json ?? []);
+        $this->assertArrayHasKey('last_active_goal', $first->summary_json ?? []);
+        $this->assertArrayHasKey('unresolved_action', $first->summary_json ?? []);
 
         $service->generateForConversation($tenant->id, $conversation->id);
 
@@ -95,6 +103,35 @@ class ConversationSummaryServiceTest extends TestCase
 
         $this->assertSame($first->summary, $second->summary);
         $this->assertSame($first->message_count, $second->message_count);
+    }
+
+    public function test_generate_for_conversation_refreshes_summary_after_threshold_when_message_count_increases(): void
+    {
+        $tenant = $this->createTenant('tenant-one');
+        $conversation = $this->createConversation($tenant, '+628155555555');
+
+        for ($i = 1; $i <= 20; $i++) {
+            $this->storeMessage($conversation, $tenant, "Pesan {$i}");
+        }
+
+        $service = app(ConversationSummaryService::class);
+        $service->generateForConversation($tenant->id, $conversation->id);
+
+        $first = ConversationSummary::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->firstOrFail();
+        $this->assertSame(20, $first->message_count);
+
+        $this->storeMessage($conversation, $tenant, 'Pesan 21');
+        $service->generateForConversation($tenant->id, $conversation->id);
+
+        $second = ConversationSummary::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->firstOrFail();
+
+        $this->assertSame(21, $second->message_count);
     }
 
     private function createTenant(string $slug): Tenant

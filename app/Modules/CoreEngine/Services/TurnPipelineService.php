@@ -288,7 +288,7 @@ class TurnPipelineService
      *   triggered:bool,
      *   status:string,
      *   reason:?string,
-     *   data:?array{summary:string,message_count:int,summarized_at:?string}
+     *   data:?array{summary:string,summary_structured:?array<string,mixed>,message_count:int,summarized_at:?string}
      * }
      */
     private function resolveDormantRetrieval(Tenant $tenant, Conversation $conversation, array $context): array
@@ -331,6 +331,7 @@ class TurnPipelineService
             'reason' => null,
             'data' => [
                 'summary' => $summary->summary,
+                'summary_structured' => is_array($summary->summary_json) ? $summary->summary_json : null,
                 'message_count' => $summary->message_count,
                 'summarized_at' => $summary->summarized_at?->toDateTimeString(),
             ],
