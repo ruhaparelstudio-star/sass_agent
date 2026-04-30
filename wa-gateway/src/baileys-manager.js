@@ -270,13 +270,53 @@ export const sendTenantMessage = async ({
     throw new Error('to wajib string.');
   }
 
-  if (messageType !== 'text') {
-    throw new Error('message_type yang didukung saat ini hanya text.');
+  if (messageType !== 'text' && messageType !== 'file') {
+    throw new Error('message_type yang didukung saat ini hanya text atau file.');
   }
 
-  const text = typeof payload?.text === 'string' ? payload.text.trim() : '';
-  if (text === '') {
-    throw new Error('payload.text wajib diisi untuk text message.');
+  let textPayload = '';
+  let filePayload = null;
+
+  if (messageType === 'text') {
+    textPayload = typeof payload?.text === 'string' ? payload.text.trim() : '';
+    if (textPayload === '') {
+      throw new Error('payload.text wajib diisi untuk text message.');
+    }
+  } else {
+    const file = payload?.file ?? null;
+    if (!file || typeof file !== 'object') {
+      throw new Error('payload.file wajib object untuk file message.');
+    }
+
+    const storageDisk = typeof file.storage_disk === 'string' ? file.storage_disk.trim() : '';
+    const storagePath = typeof file.storage_path === 'string' ? file.storage_path.trim() : '';
+    const filename = typeof file.filename === 'string' ? file.filename.trim() : '';
+    const mimeType = typeof file.mime_type === 'string' ? file.mime_type.trim() : '';
+    const caption = typeof payload?.caption === 'string' && payload.caption.trim() !== '' ? payload.caption.trim() : undefined;
+
+    if (storageDisk === '') {
+      throw new Error('payload.file.storage_disk wajib diisi.');
+    }
+
+    if (storagePath === '') {
+      throw new Error('payload.file.storage_path wajib diisi.');
+    }
+
+    if (filename === '') {
+      throw new Error('payload.file.filename wajib diisi.');
+    }
+
+    if (mimeType === '') {
+      throw new Error('payload.file.mime_type wajib diisi.');
+    }
+
+    filePayload = {
+      storageDisk,
+      storagePath,
+      filename,
+      mimeType,
+      caption,
+    };
   }
 
   const preferredSessionRef = typeof sessionProviderRef === 'string' && sessionProviderRef.trim() !== ''
@@ -292,14 +332,49 @@ export const sendTenantMessage = async ({
     throw new Error('Sesi WhatsApp aktif tidak ditemukan untuk tenant.');
   }
 
-  const sendResult = await context.socket.sendMessage(to.trim(), { text });
+  let sendPayload;
+
+  if (messageType === 'text') {
+    sendPayload = { text: textPayload };
+  } else {
+    const absolutePath = resolveTenantAssetAbsolutePath(filePayload.storageDisk, filePayload.storagePath);
+    const fileBuffer = await fs.readFile(absolutePath);
+
+    sendPayload = {
+      document: fileBuffer,
+      mimetype: filePayload.mimeType,
+      fileName: filePayload.filename,
+      caption: filePayload.caption,
+    };
+  }
+
+  const sendResult = await context.socket.sendMessage(to.trim(), sendPayload);
   const providerMessageId = typeof sendResult?.key?.id === 'string' ? sendResult.key.id : null;
 
   return {
     provider_message_id: providerMessageId,
     tenant_id: normalizedTenantId,
     to: to.trim(),
-    message_type: 'text',
+    message_type: messageType,
     session_provider_ref: context.sessionProviderRef,
   };
+};
+
+const resolveTenantAssetAbsolutePath = (storageDisk, storagePath) => {
+  const normalizedDisk = String(storageDisk).trim().toLowerCase();
+  const relativePath = String(storagePath).trim().replace(/^\/+/, '');
+
+  if (relativePath === '') {
+    throw new Error('payload.file.storage_path wajib diisi.');
+  }
+
+  if (normalizedDisk === 'local') {
+    return path.join('/app', 'storage', 'app', 'private', relativePath);
+  }
+
+  if (normalizedDisk === 'public') {
+    return path.join('/app', 'storage', 'app', 'public', relativePath);
+  }
+
+  throw new Error('payload.file.storage_disk tidak didukung.');
 };

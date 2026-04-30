@@ -7,6 +7,9 @@ use App\Models\ConversationState;
 use App\Models\ConversationSummary;
 use App\Models\LeadProfile;
 use App\Models\Tenant;
+use App\Models\TenantAsset;
+use App\Models\WaAccount;
+use App\Models\WaSession;
 use App\Modules\AiLayer\Contracts\LlmClientContract;
 use App\Modules\AiLayer\DTO\LlmResponse;
 use App\Modules\CoreEngine\Services\TurnPipelineService;
@@ -203,7 +206,7 @@ class TurnPipelineServiceTest extends TestCase
         $this->assertSame(0.6, $result['confidence']);
         $this->assertFalse($result['handoff_required']);
         $this->assertSame('allow_action', $result['decision']);
-        $this->assertStringContainsString('siap bantu', mb_strtolower($result['response_plan']['message']));
+        $this->assertStringContainsString('asisten tenant one', mb_strtolower($result['response_plan']['message']));
         $this->assertSame('invalid_json', $result['trace']['fallback_reason']);
     }
 
@@ -249,6 +252,31 @@ class TurnPipelineServiceTest extends TestCase
             'missing_event_date',
             'missing_availability_check',
         ], $result['action_candidates']['blocked'][0]['reasons']);
+    }
+
+    public function test_ask_package_detail_uses_grounded_summary_when_available(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        $this->bindLlmJson('{"intent":"ask_package_detail","confidence":0.9,"entities":{"package_query":"gold","resolved_package_name":"Gold Wedding"}}');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'detail paket gold dong',
+            'extract intent',
+            [
+                'package_detail_summary' => [
+                    'package_name' => 'Gold Wedding',
+                    'items' => ['Foto 8 jam', 'Video cinematic', 'Album 20 sheet'],
+                ],
+            ]
+        );
+
+        $this->assertSame('ask_package_detail', $result['intent']);
+        $this->assertSame('allow_action', $result['decision']);
+        $this->assertStringContainsString('gold wedding', mb_strtolower($result['response_plan']['message']));
+        $this->assertStringContainsString('foto 8 jam', mb_strtolower($result['response_plan']['message']));
     }
 
     public function test_correction_updates_only_targeted_entity_without_reset(): void
@@ -366,7 +394,7 @@ class TurnPipelineServiceTest extends TestCase
             }
         });
 
-        $this->bindLlmJson('{"intent":"ask_pricelist","confidence":0.9,"entities":{"package_query":"gold"}}');
+        $this->bindLlmJson('{"intent":"ask_pricelist","confidence":0.9,"entities":{"package_query":"gold","event_type":"wedding"}}');
 
         $result = app(TurnPipelineService::class)->handle(
             $tenant,
@@ -476,7 +504,7 @@ class TurnPipelineServiceTest extends TestCase
             }
         });
 
-        $this->bindLlmJson('{"intent":"ask_pricelist","confidence":0.9,"entities":{"package_query":"gold"}}');
+        $this->bindLlmJson('{"intent":"ask_pricelist","confidence":0.9,"entities":{"package_query":"gold","event_type":"wedding"}}');
 
         $result = app(TurnPipelineService::class)->handle(
             $tenant,
@@ -527,7 +555,7 @@ class TurnPipelineServiceTest extends TestCase
 
         $this->app->bind(ModeValidator::class, \App\Modules\Validation\Services\ModeValidatorService::class);
 
-        $this->bindLlmJson('{"intent":"ask_pricelist","confidence":0.9,"entities":{"package_query":"gold"}}');
+        $this->bindLlmJson('{"intent":"ask_pricelist","confidence":0.9,"entities":{"package_query":"gold","event_type":"wedding"}}');
 
         $result = app(TurnPipelineService::class)->handle(
             $tenant,
@@ -710,6 +738,170 @@ class TurnPipelineServiceTest extends TestCase
         $this->assertFalse($result['handoff_required']);
         $this->assertFalse($result['notification_required']);
         $this->assertSame('allow_action', $result['decision']);
+    }
+
+    public function test_provide_name_resumes_blocked_pricelist_flow_and_requests_event_type_before_file_send(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        $asset = TenantAsset::query()->create([
+            'tenant_id' => $tenant->id,
+            'asset_type' => 'pricelist',
+            'display_name' => 'Pricelist April',
+            'original_filename' => 'pricelist-april.pdf',
+            'storage_disk' => 'local',
+            'storage_path' => 'tenant-assets/pricelist/'.$tenant->id.'/pricelist-april.pdf',
+            'uploaded_by_user_id' => null,
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+
+        $account = WaAccount::query()->create([
+            'tenant_id' => $tenant->id,
+            'provider' => 'meta',
+            'provider_ref' => 'acct-001',
+            'phone' => '+62818888',
+            'status' => 'connected',
+            'last_payload' => ['event' => 'connected'],
+        ]);
+
+        WaSession::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'provider' => 'meta',
+            'provider_ref' => 'sess-001',
+            'status' => 'active',
+            'last_payload' => ['event' => 'active'],
+        ]);
+
+        $this->bindLlmJson('{"intent":"provide_name","confidence":0.95,"entities":{"customer_name":"Aris Egi Saputra"}}');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'nama saya aris egi saputra',
+            'extract intent',
+            [
+                'previous_blocked_action' => [
+                    'action' => 'send_file',
+                    'reason' => 'missing_name',
+                ],
+                'grounding' => [
+                    'price' => ['is_grounded' => true],
+                    'package' => ['is_grounded' => true],
+                    'file' => ['is_grounded' => true],
+                ],
+                'pricelist_asset' => [
+                    'id' => $asset->id,
+                    'display_name' => $asset->display_name,
+                    'original_filename' => $asset->original_filename,
+                ],
+                'delivery_channel' => [
+                    'provider' => 'meta',
+                    'wa_account_provider_ref' => 'acct-001',
+                    'wa_session_provider_ref' => 'sess-001',
+                    'to' => '+628111111111',
+                ],
+                'permissions' => [
+                    'allowed_actions' => ['send_file', 'send_text', 'reply_safe_text'],
+                    'blocked_actions' => [],
+                ],
+            ]
+        );
+
+        $this->assertSame([], $result['action_candidates']['allowed']);
+        $this->assertSame('send_file', $result['action_candidates']['blocked'][0]['action']);
+        $this->assertSame(['missing_event_type'], $result['action_candidates']['blocked'][0]['reasons']);
+        $this->assertStringContainsString('layanan', mb_strtolower($result['response_plan']['message']));
+        $this->assertSame('send_file', $result['trace']['action']);
+        $this->assertSame('blocked', $result['trace']['status']);
+        $this->assertSame('missing_event_type', $result['trace']['reason']);
+    }
+
+    public function test_provide_event_type_resumes_blocked_pricelist_flow_and_dispatches_file_when_context_is_ready(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        $asset = TenantAsset::query()->create([
+            'tenant_id' => $tenant->id,
+            'asset_type' => 'pricelist',
+            'display_name' => 'Pricelist April',
+            'original_filename' => 'pricelist-april.pdf',
+            'storage_disk' => 'local',
+            'storage_path' => 'tenant-assets/pricelist/'.$tenant->id.'/pricelist-april.pdf',
+            'uploaded_by_user_id' => null,
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+
+        $account = WaAccount::query()->create([
+            'tenant_id' => $tenant->id,
+            'provider' => 'meta',
+            'provider_ref' => 'acct-001',
+            'phone' => '+62818888',
+            'status' => 'connected',
+            'last_payload' => ['event' => 'connected'],
+        ]);
+
+        WaSession::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'provider' => 'meta',
+            'provider_ref' => 'sess-001',
+            'status' => 'active',
+            'last_payload' => ['event' => 'active'],
+        ]);
+
+        $this->bindLlmJson('{"intent":"provide_event_type","confidence":0.95,"entities":{"event_type":"wedding"}}');
+        LeadProfile::query()->where('tenant_id', $tenant->id)->where('customer_phone', $conversation->customer_phone)->update([
+            'full_name' => 'Aris Egi Saputra',
+        ]);
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'untuk wedding ka',
+            'extract intent',
+            [
+                'previous_blocked_action' => [
+                    'action' => 'send_file',
+                    'reason' => 'missing_event_type',
+                ],
+                'entities' => [
+                    'customer_name' => 'Aris Egi Saputra',
+                ],
+                'grounding' => [
+                    'price' => ['is_grounded' => true],
+                    'package' => ['is_grounded' => true],
+                    'file' => ['is_grounded' => true],
+                ],
+                'pricelist_asset' => [
+                    'id' => $asset->id,
+                    'display_name' => $asset->display_name,
+                    'original_filename' => $asset->original_filename,
+                ],
+                'delivery_channel' => [
+                    'provider' => 'meta',
+                    'wa_account_provider_ref' => 'acct-001',
+                    'wa_session_provider_ref' => 'sess-001',
+                    'to' => '+628111111111',
+                ],
+                'permissions' => [
+                    'allowed_actions' => ['send_file', 'send_text', 'reply_safe_text'],
+                    'blocked_actions' => [],
+                ],
+            ]
+        );
+
+        $this->assertSame('send_file', $result['action_candidates']['allowed'][0]['action']);
+        $this->assertSame([], $result['action_candidates']['blocked']);
+        $this->assertStringContainsString('pricelist terbaru', mb_strtolower($result['response_plan']['message']));
+        $this->assertSame('send_file', $result['trace']['action']);
+        $this->assertSame('executed', $result['trace']['status']);
     }
 
     private function createConversation(): array

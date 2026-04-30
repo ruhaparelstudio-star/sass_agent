@@ -114,7 +114,7 @@ TEXT;
             ], 'text', $inboundMessage->payload ?? null);
 
             $features = $this->featureGateService->resolveForTenant($tenant->id);
-            $context = $this->buildContext($tenant, $conversation, $state->active_goal, $features, $text, $customerPhone);
+            $context = $this->buildContext($tenant, $conversation, $state->active_goal, $features, $inboundMessage, $text, $customerPhone);
             $executedSteps[] = 'retrieve_knowledge';
             $pipeline = $this->turnPipelineService->handle(
                 $tenant,
@@ -248,7 +248,22 @@ TEXT;
      */
     private function orderedUniqueSteps(array $executedSteps): array
     {
-        return array_values(array_unique($executedSteps));
+        $unique = array_values(array_unique($executedSteps));
+        $ordered = [];
+
+        foreach (self::PIPELINE_STEPS as $step) {
+            if (in_array($step, $unique, true)) {
+                $ordered[] = $step;
+            }
+        }
+
+        foreach ($unique as $step) {
+            if (! in_array($step, self::PIPELINE_STEPS, true)) {
+                $ordered[] = $step;
+            }
+        }
+
+        return $ordered;
     }
 
     /**
@@ -260,6 +275,7 @@ TEXT;
         Conversation $conversation,
         ?string $activeGoal,
         array $features,
+        WaInboundMessage $inboundMessage,
         string $userMessage,
         string $customerPhone
     ): array {
@@ -278,7 +294,9 @@ TEXT;
         }
 
         $catalog = $this->catalogResolver->resolveCatalog($tenant->id, now());
+        $packageDetailLookup = $this->buildPackageDetailLookup($catalog);
         $pricelist = $this->pricelistAssetResolver->resolvePricelistAsset($tenant->id, now());
+        $previousBlockedAction = $this->resolvePreviousBlockedAction($tenant, $conversation);
 
         $grounding = [
             'price' => ['is_grounded' => $catalog !== [], 'source' => 'structured_catalog'],
@@ -317,6 +335,44 @@ TEXT;
             'calendar_check' => $calendarCheck,
             'availability_checked' => $calendarCheck['checked'] === true,
             'lead_limit' => $leadLimitEvaluation,
+            'previous_blocked_action' => $previousBlockedAction,
+            'package_detail_lookup' => $packageDetailLookup,
+            'pricelist_asset' => $pricelist,
+            'delivery_channel' => [
+                'provider' => $inboundMessage->provider,
+                'wa_account_provider_ref' => (string) ($inboundMessage->account?->provider_ref ?? ''),
+                'wa_session_provider_ref' => $inboundMessage->session?->provider_ref,
+                'to' => $inboundMessage->from,
+            ],
+        ];
+    }
+
+    /**
+     * @return array{action:string,reason:string}|null
+     */
+    private function resolvePreviousBlockedAction(Tenant $tenant, Conversation $conversation): ?array
+    {
+        $lastContext = ConversationContext::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->latest('id')
+            ->first();
+
+        $reason = is_string($lastContext?->reason) ? trim($lastContext->reason) : '';
+        if ($reason === '' || ! str_contains($reason, ':')) {
+            return null;
+        }
+
+        [$action, $blockedReason] = explode(':', $reason, 2);
+        $action = trim($action);
+        $blockedReason = trim($blockedReason);
+        if ($action === '' || $blockedReason === '') {
+            return null;
+        }
+
+        return [
+            'action' => $action,
+            'reason' => $blockedReason,
         ];
     }
 
@@ -327,6 +383,101 @@ TEXT;
         }
 
         return preg_match('/\b(booking|jadwal|tanggal|available|availability)\b/i', $userMessage) === 1;
+    }
+
+    /**
+     * @param  array<int,array<string,mixed>>  $catalog
+     * @return array<string,array{package_name:string,items:array<int,string>}>
+     */
+    private function buildPackageDetailLookup(array $catalog): array
+    {
+        $lookup = [];
+
+        foreach ($catalog as $catalogRow) {
+            if (! is_array($catalogRow)) {
+                continue;
+            }
+
+            $products = $catalogRow['products'] ?? null;
+            if (! is_array($products)) {
+                continue;
+            }
+
+            foreach ($products as $product) {
+                if (! is_array($product)) {
+                    continue;
+                }
+
+                $packages = $product['packages'] ?? null;
+                if (! is_array($packages)) {
+                    continue;
+                }
+
+                foreach ($packages as $package) {
+                    if (! is_array($package)) {
+                        continue;
+                    }
+
+                    $packageName = trim((string) ($package['name'] ?? ''));
+                    if ($packageName === '') {
+                        continue;
+                    }
+
+                    $items = [];
+                    foreach (($package['items'] ?? []) as $itemRow) {
+                        if (! is_array($itemRow)) {
+                            continue;
+                        }
+
+                        $name = trim((string) ($itemRow['name'] ?? ''));
+                        if ($name === '') {
+                            continue;
+                        }
+
+                        $items[] = $name;
+                    }
+
+                    if ($items === []) {
+                        continue;
+                    }
+
+                    $normalizedSummary = [
+                        'package_name' => $packageName,
+                        'items' => array_values(array_unique($items)),
+                    ];
+
+                    $keys = [];
+                    $code = strtolower(trim((string) ($package['code'] ?? '')));
+                    if ($code !== '') {
+                        $keys[] = $code;
+                    }
+
+                    $nameKey = strtolower($packageName);
+                    if ($nameKey !== '') {
+                        $keys[] = $nameKey;
+                    }
+
+                    foreach (($package['aliases'] ?? []) as $aliasRow) {
+                        if (! is_array($aliasRow)) {
+                            continue;
+                        }
+
+                        $alias = strtolower(trim((string) ($aliasRow['alias'] ?? '')));
+                        if ($alias === '') {
+                            continue;
+                        }
+
+                        $keys[] = $alias;
+                    }
+
+                    foreach (array_values(array_unique($keys)) as $key) {
+                        $lookup[$key] = $normalizedSummary;
+                    }
+                }
+            }
+        }
+
+        return $lookup;
     }
 
     /**

@@ -29,7 +29,7 @@ class GroundingValidatorService implements GroundingValidator
     private function requiredClaimsByAction(string $action): array
     {
         return match ($action) {
-            'send_file' => ['price', 'package', 'file'],
+            'send_file' => ['file'],
             'send_booking_link' => ['package', 'calendar'],
             'send_invoice' => ['invoice', 'price', 'file'],
             default => [],

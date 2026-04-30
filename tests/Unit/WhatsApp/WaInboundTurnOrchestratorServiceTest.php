@@ -7,10 +7,15 @@ use App\Models\Conversation;
 use App\Models\ConversationContext;
 use App\Models\ConversationState;
 use App\Models\Handoff;
+use App\Models\KnowledgeVersion;
 use App\Models\LeadProfile;
 use App\Models\Notification;
+use App\Models\ServiceCatalog;
+use App\Models\TenantAsset;
+use App\Models\WaOutboundMessage;
 use App\Modules\AiLayer\Contracts\LlmClientContract;
 use App\Modules\AiLayer\DTO\LlmResponse;
+use App\Modules\Validation\Contracts\PolicyValidator;
 use App\Modules\WhatsApp\Services\WaInboundTurnOrchestratorService;
 use App\Models\DecisionTrace;
 use App\Models\Tenant;
@@ -106,8 +111,8 @@ class WaInboundTurnOrchestratorServiceTest extends TestCase
             'load_tenant_and_wa_account',
             'check_tenant_status_and_plan',
             'load_conversation_and_state',
-            'retrieve_knowledge',
             'interpret_and_extract_entities',
+            'retrieve_knowledge',
             'build_and_validate_decision',
             'compose_response',
             'send_reply_action',
@@ -123,7 +128,7 @@ class WaInboundTurnOrchestratorServiceTest extends TestCase
         $this->assertDatabaseHas('messages', [
             'tenant_id' => $tenant->id,
             'direction' => 'outbound',
-            'content' => 'Minta nama lengkap pelanggan terlebih dahulu sebelum melanjutkan.',
+            'content' => 'Sebelum kita lanjut, aku boleh tahu nama kakak?',
         ]);
 
         $outbound = \App\Models\Message::query()
@@ -148,6 +153,182 @@ class WaInboundTurnOrchestratorServiceTest extends TestCase
         $this->assertNotNull($context?->summary);
         $this->assertNotNull($context?->reason);
         $this->assertSame('pricing', $context?->recommended_next_action);
+    }
+
+    public function test_inbound_turn_orchestrator_resumes_pricelist_send_after_name_is_provided(): void
+    {
+        $this->bindLlmJsonSequence([
+            '{"intent":"ask_pricelist","confidence":0.91,"entities":{"package_query":"gold"}}',
+            '{"intent":"provide_name","confidence":0.95,"entities":{"customer_name":"Aris Egi Saputra"}}',
+            '{"intent":"provide_event_type","confidence":0.95,"entities":{"event_type":"wedding"}}',
+        ]);
+        $this->app->bind(PolicyValidator::class, fn () => new class implements PolicyValidator
+        {
+            public function validate(array $candidate, array $context): ?string
+            {
+                return null;
+            }
+        });
+
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+
+        $asset = TenantAsset::query()->create([
+            'tenant_id' => $tenant->id,
+            'asset_type' => 'pricelist',
+            'display_name' => 'Pricelist April',
+            'original_filename' => 'pricelist-april.pdf',
+            'storage_disk' => 'local',
+            'storage_path' => 'tenant-assets/pricelist/1/pricelist-april.pdf',
+            'uploaded_by_user_id' => null,
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+
+        KnowledgeVersion::query()->create([
+            'tenant_id' => $tenant->id,
+            'name' => 'v1',
+            'is_active' => true,
+            'effective_from' => now()->subDay(),
+            'effective_until' => now()->addDay(),
+        ]);
+
+        ServiceCatalog::query()->create([
+            'tenant_id' => $tenant->id,
+            'code' => 'wedding',
+            'name' => 'Wedding Catalog',
+            'description' => 'Catalog for test grounding.',
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+
+        $account = WaAccount::query()->create([
+            'tenant_id' => $tenant->id,
+            'provider' => 'meta',
+            'provider_ref' => 'acct-001',
+            'phone' => '+628111',
+            'status' => 'connected',
+            'last_payload' => ['event' => 'connected'],
+        ]);
+
+        $session = WaSession::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'provider' => 'meta',
+            'provider_ref' => 'sess-001',
+            'status' => 'active',
+            'last_payload' => ['event' => 'active'],
+        ]);
+
+        $inboundOne = WaInboundMessage::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'wa_session_id' => $session->id,
+            'provider' => 'meta',
+            'provider_message_id' => 'msg-001',
+            'from' => '+628111',
+            'to' => '+628222',
+            'message_type' => 'text',
+            'message_timestamp' => now(),
+            'payload' => [
+                'message' => [
+                    'conversation' => 'boleh minta pricelistnya',
+                ],
+            ],
+            'meta' => ['source' => 'test'],
+        ]);
+
+        $inboundTwo = WaInboundMessage::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'wa_session_id' => $session->id,
+            'provider' => 'meta',
+            'provider_message_id' => 'msg-002',
+            'from' => '+628111',
+            'to' => '+628222',
+            'message_type' => 'text',
+            'message_timestamp' => now()->addSecond(),
+            'payload' => [
+                'message' => [
+                    'conversation' => 'nama saya aris egi saputra',
+                ],
+            ],
+            'meta' => ['source' => 'test'],
+        ]);
+
+        $inboundThree = WaInboundMessage::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'wa_session_id' => $session->id,
+            'provider' => 'meta',
+            'provider_message_id' => 'msg-003',
+            'from' => '+628111',
+            'to' => '+628222',
+            'message_type' => 'text',
+            'message_timestamp' => now()->addSeconds(2),
+            'payload' => [
+                'message' => [
+                    'conversation' => 'untuk wedding ka',
+                ],
+            ],
+            'meta' => ['source' => 'test'],
+        ]);
+
+        $service = app(WaInboundTurnOrchestratorService::class);
+        $service->process($tenant, $inboundOne);
+        $service->process($tenant, $inboundTwo);
+        $service->process($tenant, $inboundThree);
+        $this->assertDatabaseHas('action_logs', [
+            'tenant_id' => $tenant->id,
+            'action' => 'send_file',
+            'status' => 'executed',
+        ]);
+
+        $fileOutbound = WaOutboundMessage::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('message_type', 'file')
+            ->latest('id')
+            ->first();
+
+        $this->assertNotNull($fileOutbound);
+
+        $outboundMessages = \App\Models\Message::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('direction', 'outbound')
+            ->orderBy('id')
+            ->get(['content'])
+            ->pluck('content')
+            ->all();
+
+        $this->assertCount(3, $outboundMessages);
+        $this->assertSame('Sebelum kita lanjut, aku boleh tahu nama kakak?', $outboundMessages[0]);
+        $this->assertSame('Siap kak, kakak lagi cari layanan untuk acara apa ya?', $outboundMessages[1]);
+
+        $outboundText = \App\Models\Message::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('direction', 'outbound')
+            ->latest('id')
+            ->firstOrFail();
+
+        $this->assertSame('Ini pricelist terbaru kami ya kak, kalau ada yang kurang jelas boleh langsung ditanyakan.', $outboundText->content);
+
+        $this->assertDatabaseHas('conversation_contexts', [
+            'tenant_id' => $tenant->id,
+            'reason' => 'send_file:missing_event_type',
+        ]);
+
+        $this->assertDatabaseHas('lead_profiles', [
+            'tenant_id' => $tenant->id,
+            'customer_phone' => '628111',
+            'full_name' => 'Aris Egi Saputra',
+        ]);
     }
 
     public function test_inbound_turn_orchestrator_is_idempotent_per_inbound_message(): void
@@ -441,6 +622,40 @@ class WaInboundTurnOrchestratorServiceTest extends TestCase
             {
                 return new LlmResponse(
                     content: $this->json,
+                    model: 'unit-test-model',
+                    totalTokens: 42,
+                    raw: ['tenant_id' => $tenantId, 'message' => $userMessage]
+                );
+            }
+        });
+    }
+
+    /**
+     * @param  list<string>  $jsonResponses
+     */
+    private function bindLlmJsonSequence(array $jsonResponses): void
+    {
+        $this->app->instance(LlmClientContract::class, new class($jsonResponses) implements LlmClientContract
+        {
+            /**
+             * @var list<string>
+             */
+            private array $responses;
+
+            /**
+             * @param  list<string>  $responses
+             */
+            public function __construct(array $responses)
+            {
+                $this->responses = $responses;
+            }
+
+            public function complete(int $tenantId, string $userMessage, string $instruction): LlmResponse
+            {
+                $content = array_shift($this->responses) ?? '{"intent":"unknown","confidence":0.0,"entities":{}}';
+
+                return new LlmResponse(
+                    content: $content,
                     model: 'unit-test-model',
                     totalTokens: 42,
                     raw: ['tenant_id' => $tenantId, 'message' => $userMessage]

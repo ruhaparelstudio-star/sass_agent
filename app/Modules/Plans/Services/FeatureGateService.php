@@ -30,12 +30,18 @@ class FeatureGateService
         }
 
         $features = $subscription->plan->features->keyBy('code');
+        $calendarAccess = $this->resolveFeatureBool($features, ['calendar_access', 'calendar_enabled']) ?? false;
+        $automationEnabled = $this->resolveFeatureBool($features, ['automation_enabled', 'automation']);
+        if ($automationEnabled === null) {
+            // Backward compatibility: legacy plans may not have this flag yet.
+            $automationEnabled = true;
+        }
 
         return [
             'wa_agent_limit' => $this->resolveIntValue($features->get('wa_agent_limit')?->value_int),
             'lead_limit' => $this->resolveIntValue($features->get('lead_limit')?->value_int),
-            'calendar_access' => $this->resolveBoolValue($features->get('calendar_access')?->value_bool),
-            'automation_enabled' => $this->resolveBoolValue($features->get('automation_enabled')?->value_bool),
+            'calendar_access' => $calendarAccess,
+            'automation_enabled' => $automationEnabled,
         ];
     }
 
@@ -60,5 +66,21 @@ class FeatureGateService
     private function resolveBoolValue(mixed $value): bool
     {
         return is_bool($value) ? $value : false;
+    }
+
+    private function resolveFeatureBool(\Illuminate\Support\Collection $features, array $codes): ?bool
+    {
+        foreach ($codes as $code) {
+            $feature = $features->get($code);
+            if ($feature === null) {
+                continue;
+            }
+
+            if (is_bool($feature->value_bool)) {
+                return $feature->value_bool;
+            }
+        }
+
+        return null;
     }
 }

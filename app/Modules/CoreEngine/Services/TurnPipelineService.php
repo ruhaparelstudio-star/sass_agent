@@ -167,7 +167,7 @@ class TurnPipelineService
             ],
             'action_candidates' => $result,
             'response_plan' => [
-                'message' => $this->buildResponsePlanMessage($interpretation->intent, $result),
+                'message' => $this->buildResponsePlanMessage($interpretation->intent, $result, $tenant, $entities, $context),
             ],
             'trace' => [
                 'executed' => $dispatchTrace['executed'],
@@ -338,8 +338,12 @@ class TurnPipelineService
 
     private function buildCandidate(Intent $intent, array $entities, ?LeadProfile $leadProfile, array $context): array
     {
+        if ($this->shouldResumePricelistFlow($intent, $entities, $context)) {
+            return $this->buildPricelistCandidate($leadProfile, $entities, $context);
+        }
+
         return match ($intent) {
-            Intent::AskPricelist => $this->buildPricelistCandidate($leadProfile),
+            Intent::AskPricelist => $this->buildPricelistCandidate($leadProfile, $entities, $context),
             Intent::BookingIntent => $this->buildBookingCandidate($entities, $leadProfile, $context),
             default => [
                 'action' => 'reply_safe_text',
@@ -348,21 +352,42 @@ class TurnPipelineService
         };
     }
 
-    private function buildPricelistCandidate(?LeadProfile $leadProfile): array
+    private function buildPricelistCandidate(?LeadProfile $leadProfile, array $entities = [], array $context = []): array
     {
-        $missingName = trim((string) ($leadProfile?->full_name ?? '')) === '';
+        if (! $this->hasKnownCustomerName($leadProfile, $entities)) {
+            return [
+                'action' => 'send_file',
+                'reasons' => ['missing_name'],
+            ];
+        }
 
-        return [
+        if (! $this->hasKnownEventType($entities)) {
+            return [
+                'action' => 'send_file',
+                'reasons' => ['missing_event_type'],
+            ];
+        }
+
+        $sendFileMeta = $this->buildSendFileMeta($context);
+        $candidate = [
             'action' => 'send_file',
-            'reasons' => $missingName ? ['missing_name'] : [],
+            'reasons' => [],
         ];
+
+        if ($sendFileMeta !== null) {
+            $candidate['meta'] = [
+                'send_file' => $sendFileMeta,
+            ];
+        }
+
+        return $candidate;
     }
 
     private function buildBookingCandidate(array $entities, ?LeadProfile $leadProfile, array $context): array
     {
         $reasons = [];
 
-        if (trim((string) ($leadProfile?->full_name ?? '')) === '') {
+        if (! $this->hasKnownCustomerName($leadProfile, $entities)) {
             $reasons[] = 'missing_name';
         }
 
@@ -384,27 +409,268 @@ class TurnPipelineService
         ];
     }
 
-    private function buildResponsePlanMessage(Intent $intent, array $candidates): string
+    private function buildResponsePlanMessage(Intent $intent, array $candidates, Tenant $tenant, array $entities = [], array $context = []): string
     {
-        if (in_array($intent, [Intent::Greeting, Intent::UnclearMessage], true)) {
-            return 'Halo, kami siap bantu. Boleh info kebutuhan Anda, misalnya paket, tanggal acara, atau budget?';
+        if ($intent === Intent::Greeting) {
+            $tenantName = trim((string) $tenant->name);
+            if ($tenantName === '') {
+                $tenantName = 'kami';
+            }
+
+            return sprintf('Perkenalkan saya asisten %s, ada yang bisa saya bantu?', $tenantName);
         }
 
-        if ($intent === Intent::ProvideName) {
-            return 'Terima kasih, namanya sudah kami catat. Boleh share tanggal acara Anda?';
+        if ($intent === Intent::UnclearMessage) {
+            return 'Boleh ceritakan kebutuhan acara kakak dulu ya, misalnya paket, tanggal, atau budget.';
+        }
+
+        $allowedAction = (string) (($candidates['allowed'][0]['action'] ?? '') ?: '');
+        if ($allowedAction === 'send_file') {
+            return 'Ini pricelist terbaru kami ya kak, kalau ada yang kurang jelas boleh langsung ditanyakan.';
         }
 
         if (($candidates['blocked'] ?? []) === []) {
-            return 'Terima kasih, boleh ceritakan kebutuhan acara Anda agar kami bisa bantu rekomendasi paket yang paling sesuai?';
+            if ($intent === Intent::AskPackageDetail) {
+                $summary = $this->resolvePackageDetailSummary($context, $entities);
+                if ($summary !== null) {
+                    $packageName = trim((string) ($summary['package_name'] ?? 'Paket pilihan'));
+                    if ($packageName === '') {
+                        $packageName = 'Paket pilihan';
+                    }
+
+                    $itemSentence = $this->formatPackageItems($summary['items'] ?? []);
+
+                    return sprintf('Untuk %s, detail photo+video-nya %s.', $packageName, $itemSentence);
+                }
+
+                return 'Boleh sebutkan paket atau layanan yang mau dijelaskan detailnya ya kak?';
+            }
+
+            if ($intent === Intent::ProvideName) {
+                return 'Makasih kak, namanya sudah saya catat. Siap kak, kakak lagi cari layanan untuk acara apa ya?';
+            }
+
+            return 'Terima kasih kak, boleh ceritakan kebutuhan acaranya biar saya bantu rekomendasi paket yang paling sesuai?';
         }
 
         $reasons = $candidates['blocked'][0]['reasons'] ?? [];
 
         if (in_array('missing_name', $reasons, true)) {
-            return 'Minta nama lengkap pelanggan terlebih dahulu sebelum melanjutkan.';
+            return 'Sebelum kita lanjut, aku boleh tahu nama kakak?';
         }
 
-        return 'Jelaskan data yang masih kurang dan jangan eksekusi aksi.';
+        if (in_array('missing_event_type', $reasons, true)) {
+            return 'Siap kak, kakak lagi cari layanan untuk acara apa ya?';
+        }
+
+        if (in_array('missing_package', $reasons, true)) {
+            return 'Boleh info paket yang kakak minati dulu ya?';
+        }
+
+        if (in_array('missing_event_date', $reasons, true)) {
+            return 'Boleh share tanggal acara yang direncanakan ya kak?';
+        }
+
+        if (in_array('missing_availability_check', $reasons, true)) {
+            return 'Siap kak, kami bantu cek dulu ketersediaan jadwalnya ya.';
+        }
+
+        return 'Boleh dibantu lengkapi informasi yang masih kurang ya kak, supaya saya bisa lanjut bantu dengan tepat.';
+    }
+
+    private function shouldResumePricelistFlow(Intent $intent, array $entities, array $context): bool
+    {
+        if (! in_array($intent, [Intent::ProvideName, Intent::ProvideEventType], true)) {
+            return false;
+        }
+
+        $previousBlockedAction = $context['previous_blocked_action'] ?? null;
+        if (! is_array($previousBlockedAction)) {
+            return false;
+        }
+
+        if (($previousBlockedAction['action'] ?? null) !== 'send_file') {
+            return false;
+        }
+
+        $reason = (string) ($previousBlockedAction['reason'] ?? '');
+
+        if ($reason === 'missing_name') {
+            return $this->hasKnownCustomerName(null, $entities);
+        }
+
+        if ($reason === 'missing_event_type') {
+            return $this->hasKnownEventType($entities);
+        }
+
+        return false;
+    }
+
+    private function hasKnownCustomerName(?LeadProfile $leadProfile, array $entities): bool
+    {
+        $leadName = trim((string) ($leadProfile?->full_name ?? ''));
+        if ($leadName !== '') {
+            return true;
+        }
+
+        $entityName = trim((string) ($entities['customer_name'] ?? $entities['name'] ?? ''));
+
+        return $entityName !== '';
+    }
+
+    private function hasKnownEventType(array $entities): bool
+    {
+        $eventType = trim((string) ($entities['event_type'] ?? ''));
+
+        return $eventType !== '';
+    }
+
+    /**
+     * @param  array<string,mixed>  $context
+     * @param  array<string,mixed>  $entities
+     * @return array{package_name:string,items:array<int,string>}|null
+     */
+    private function resolvePackageDetailSummary(array $context, array $entities): ?array
+    {
+        $directSummary = $context['package_detail_summary'] ?? null;
+        if (is_array($directSummary)) {
+            $packageName = trim((string) ($directSummary['package_name'] ?? ''));
+            $items = $this->normalizeStringList($directSummary['items'] ?? []);
+            if ($packageName !== '' && $items !== []) {
+                return [
+                    'package_name' => $packageName,
+                    'items' => $items,
+                ];
+            }
+        }
+
+        $lookup = $context['package_detail_lookup'] ?? null;
+        if (! is_array($lookup) || $lookup === []) {
+            return null;
+        }
+
+        $candidateKeys = array_filter([
+            strtolower(trim((string) ($entities['resolved_package_code'] ?? ''))),
+            strtolower(trim((string) ($entities['resolved_package_name'] ?? ''))),
+            strtolower(trim((string) ($entities['package_query'] ?? ''))),
+            strtolower(trim((string) ($entities['package_interest'] ?? ''))),
+        ], static fn (string $value): bool => $value !== '');
+
+        foreach ($candidateKeys as $key) {
+            $match = $lookup[$key] ?? null;
+            if (! is_array($match)) {
+                continue;
+            }
+
+            $packageName = trim((string) ($match['package_name'] ?? ''));
+            $items = $this->normalizeStringList($match['items'] ?? []);
+            if ($packageName !== '' && $items !== []) {
+                return [
+                    'package_name' => $packageName,
+                    'items' => $items,
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  mixed  $value
+     * @return array<int,string>
+     */
+    private function normalizeStringList(mixed $value): array
+    {
+        if (! is_array($value)) {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ($value as $row) {
+            if (! is_string($row)) {
+                continue;
+            }
+
+            $item = trim($row);
+            if ($item === '') {
+                continue;
+            }
+
+            $normalized[] = $item;
+        }
+
+        return array_values(array_unique($normalized));
+    }
+
+    /**
+     * @param  array<int,string>  $items
+     */
+    private function formatPackageItems(array $items): string
+    {
+        if ($items === []) {
+            return 'bisa kami jelaskan lebih lanjut sesuai kebutuhan kakak';
+        }
+
+        $items = array_slice($items, 0, 3);
+
+        return implode(', ', $items);
+    }
+
+    /**
+     * @return array<string,mixed>|null
+     */
+    private function buildSendFileMeta(array $context): ?array
+    {
+        $asset = $context['pricelist_asset'] ?? null;
+        $delivery = $context['delivery_channel'] ?? null;
+
+        if (! is_array($asset) || ! is_array($delivery)) {
+            return null;
+        }
+
+        $provider = trim((string) ($delivery['provider'] ?? ''));
+        $waAccountProviderRef = trim((string) ($delivery['wa_account_provider_ref'] ?? ''));
+        $to = trim((string) ($delivery['to'] ?? ''));
+        $tenantAssetId = (int) ($asset['id'] ?? 0);
+        $originalFilename = trim((string) ($asset['original_filename'] ?? ''));
+        $displayName = trim((string) ($asset['display_name'] ?? ''));
+
+        if ($provider === '' || $waAccountProviderRef === '' || $to === '' || $tenantAssetId <= 0) {
+            return null;
+        }
+
+        $fileName = $originalFilename !== '' ? $originalFilename : $displayName;
+        if ($fileName === '') {
+            return null;
+        }
+
+        return [
+            'provider' => $provider,
+            'wa_account_provider_ref' => $waAccountProviderRef,
+            'wa_session_provider_ref' => $delivery['wa_session_provider_ref'] ?? null,
+            'provider_message_id' => null,
+            'to' => $to,
+            'tenant_asset_id' => $tenantAssetId,
+            'file_name' => $fileName,
+            'mime_type' => $this->detectMimeTypeFromFilename($fileName),
+            'caption' => $displayName !== '' ? $displayName : 'Pricelist',
+            'meta' => [
+                'source' => 'turn_pipeline',
+            ],
+        ];
+    }
+
+    private function detectMimeTypeFromFilename(string $fileName): string
+    {
+        $extension = strtolower((string) pathinfo($fileName, PATHINFO_EXTENSION));
+
+        return match ($extension) {
+            'pdf' => 'application/pdf',
+            'jpg', 'jpeg' => 'image/jpeg',
+            'png' => 'image/png',
+            'webp' => 'image/webp',
+            default => 'application/octet-stream',
+        };
     }
 
     private function normalizeDecisionActionName(string $action): string

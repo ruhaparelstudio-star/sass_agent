@@ -15,17 +15,15 @@ class GroundingValidatorServiceTest extends TestCase
             ['action' => 'send_file'],
             [
                 'grounding' => [
-                    'price' => ['is_grounded' => true],
-                    'package' => ['is_grounded' => false],
-                    'file' => ['is_grounded' => true],
+                    'file' => ['is_grounded' => false],
                 ],
             ]
         );
 
-        $this->assertSame('grounding_package_missing_source', $reason);
+        $this->assertSame('grounding_file_missing_source', $reason);
     }
 
-    public function test_allows_send_file_when_all_required_grounding_exists(): void
+    public function test_allows_send_file_when_pricelist_asset_is_grounded(): void
     {
         $validator = new GroundingValidatorService;
 
@@ -33,8 +31,6 @@ class GroundingValidatorServiceTest extends TestCase
             ['action' => 'send_file'],
             [
                 'grounding' => [
-                    'price' => ['is_grounded' => true],
-                    'package' => ['is_grounded' => true],
                     'file' => ['is_grounded' => true],
                 ],
             ]
@@ -110,7 +106,7 @@ class GroundingValidatorServiceTest extends TestCase
         $this->assertSame('grounding_calendar_missing_source', $reason);
     }
 
-    public function test_blocks_send_file_when_price_is_not_grounded(): void
+    public function test_send_file_does_not_require_price_or_package_grounding(): void
     {
         $validator = new GroundingValidatorService;
 
@@ -119,13 +115,13 @@ class GroundingValidatorServiceTest extends TestCase
             [
                 'grounding' => [
                     'price' => ['is_grounded' => false],
-                    'package' => ['is_grounded' => true],
+                    'package' => ['is_grounded' => false],
                     'file' => ['is_grounded' => true],
                 ],
             ]
         );
 
-        $this->assertSame('grounding_price_missing_source', $reason);
+        $this->assertNull($reason);
     }
 
     public function test_blocks_send_file_when_pricelist_asset_is_not_grounded(): void
@@ -136,8 +132,6 @@ class GroundingValidatorServiceTest extends TestCase
             ['action' => 'send_file'],
             [
                 'grounding' => [
-                    'price' => ['is_grounded' => true],
-                    'package' => ['is_grounded' => true],
                     'file' => ['is_grounded' => false],
                 ],
             ]

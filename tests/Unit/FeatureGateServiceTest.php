@@ -82,7 +82,7 @@ class FeatureGateServiceTest extends TestCase
         ], $gates);
     }
 
-    public function test_it_falls_back_per_key_when_feature_rows_are_missing_or_invalid_type(): void
+    public function test_it_uses_backward_compatible_defaults_when_active_subscription_has_legacy_feature_shape(): void
     {
         $tenant = Tenant::query()->create([
             'name' => 'Tenant One',
@@ -97,7 +97,7 @@ class FeatureGateServiceTest extends TestCase
         ]);
         $plan->features()->createMany([
             ['code' => 'wa_agent_limit', 'name' => 'WA Agent Limit', 'value_string' => 'bad-type'],
-            ['code' => 'calendar_access', 'name' => 'Calendar Access', 'value_bool' => true],
+            ['code' => 'calendar_enabled', 'name' => 'Calendar Enabled', 'value_bool' => true],
         ]);
 
         TenantSubscription::query()->create([
@@ -114,6 +114,42 @@ class FeatureGateServiceTest extends TestCase
             'wa_agent_limit' => 0,
             'lead_limit' => 0,
             'calendar_access' => true,
+            'automation_enabled' => true,
+        ], $gates);
+    }
+
+    public function test_it_respects_explicit_automation_flag_when_present(): void
+    {
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+
+        $plan = Plan::query()->create([
+            'name' => 'Starter',
+            'slug' => 'starter',
+            'is_active' => true,
+        ]);
+        $plan->features()->createMany([
+            ['code' => 'wa_agent_limit', 'name' => 'WA Agent Limit', 'value_int' => 1],
+            ['code' => 'automation_enabled', 'name' => 'Automation Enabled', 'value_bool' => false],
+        ]);
+
+        TenantSubscription::query()->create([
+            'tenant_id' => $tenant->id,
+            'plan_id' => $plan->id,
+            'status' => 'active',
+            'starts_at' => now(),
+            'current_marker' => 1,
+        ]);
+
+        $gates = app(FeatureGateService::class)->resolveForTenant($tenant->id);
+
+        $this->assertSame([
+            'wa_agent_limit' => 1,
+            'lead_limit' => 0,
+            'calendar_access' => false,
             'automation_enabled' => false,
         ], $gates);
     }

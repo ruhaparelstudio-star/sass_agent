@@ -6,7 +6,12 @@ import { createCallbackClient } from './callback-client.js';
 import { clearTenantQr, getTenantQr, setTenantQr } from './qr-store.js';
 import { validateStatusPayload } from './status-contract.js';
 
-export const createApp = ({ callbackClient = createCallbackClient() } = {}) => {
+export const createApp = ({
+  callbackClient = createCallbackClient(),
+  sendTenantMessageFn = sendTenantMessage,
+  connectTenantSessionFn = connectTenantSession,
+  disconnectTenantSessionsFn = disconnectTenantSessions,
+} = {}) => {
   const app = express();
   app.use(express.json());
 
@@ -92,7 +97,7 @@ export const createApp = ({ callbackClient = createCallbackClient() } = {}) => {
     }
 
     try {
-      const result = await connectTenantSession({
+      const result = await connectTenantSessionFn({
         tenantId,
         provider,
         accountProviderRef,
@@ -133,7 +138,7 @@ export const createApp = ({ callbackClient = createCallbackClient() } = {}) => {
     }
 
     try {
-      const result = await disconnectTenantSessions({
+      const result = await disconnectTenantSessionsFn({
         tenantId,
         provider,
         accountProviderRef,
@@ -171,7 +176,7 @@ export const createApp = ({ callbackClient = createCallbackClient() } = {}) => {
     }
 
     try {
-      const result = await sendTenantMessage({
+      const result = await sendTenantMessageFn({
         tenantId,
         to,
         messageType,

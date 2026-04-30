@@ -158,3 +158,160 @@ test('POST /callbacks/status rejects invalid payload before forwarding', async (
     await stopServer(server);
   }
 });
+
+test('POST /outbound accepts valid text payload contract', async () => {
+  const app = createApp({
+    callbackClient: {
+      sendStatus: async () => ({}),
+    },
+    sendTenantMessageFn: async ({ tenantId, to, messageType, payload, sessionProviderRef }) => ({
+      provider_message_id: 'mock-001',
+      tenant_id: tenantId,
+      to,
+      message_type: messageType,
+      payload,
+      session_provider_ref: sessionProviderRef,
+    }),
+  });
+  const server = await startServer(app);
+
+  try {
+    const address = server.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/outbound`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tenant_id: 1,
+        to: '628111111111@s.whatsapp.net',
+        message_type: 'text',
+        payload: {
+          text: 'Halo',
+        },
+        session_provider_ref: 'sess-001',
+      }),
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.status, 'sent');
+    assert.equal(body.message_type, 'text');
+    assert.equal(body.provider_message_id, 'mock-001');
+  } finally {
+    await stopServer(server);
+  }
+});
+
+test('POST /outbound accepts valid file payload contract', async () => {
+  const app = createApp({
+    callbackClient: {
+      sendStatus: async () => ({}),
+    },
+    sendTenantMessageFn: async ({ tenantId, to, messageType, payload, sessionProviderRef }) => ({
+      provider_message_id: 'mock-file-001',
+      tenant_id: tenantId,
+      to,
+      message_type: messageType,
+      payload,
+      session_provider_ref: sessionProviderRef,
+    }),
+  });
+  const server = await startServer(app);
+
+  try {
+    const address = server.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/outbound`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tenant_id: 1,
+        to: '628111111111@s.whatsapp.net',
+        message_type: 'file',
+        payload: {
+          file: {
+            storage_disk: 'local',
+            storage_path: 'tenant-assets/pricelist/1/pricelist-april.pdf',
+            filename: 'pricelist-april.pdf',
+            mime_type: 'application/pdf',
+          },
+          caption: 'Pricelist April',
+        },
+        session_provider_ref: 'sess-001',
+      }),
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.status, 'sent');
+    assert.equal(body.message_type, 'file');
+    assert.equal(body.provider_message_id, 'mock-file-001');
+  } finally {
+    await stopServer(server);
+  }
+});
+
+test('POST /outbound rejects invalid file payload contract with 422', async () => {
+  const app = createApp({
+    callbackClient: {
+      sendStatus: async () => ({}),
+    },
+  });
+  const server = await startServer(app);
+
+  try {
+    const address = server.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/outbound`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tenant_id: 1,
+        to: '628111111111@s.whatsapp.net',
+        message_type: 'file',
+        payload: {
+          file: {
+            storage_disk: 'local',
+            storage_path: '',
+            filename: 'pricelist-april.pdf',
+            mime_type: 'application/pdf',
+          },
+        },
+      }),
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 422);
+    assert.equal(body.status, 'error');
+  } finally {
+    await stopServer(server);
+  }
+});
+
+test('POST /outbound rejects unsupported message_type with 422', async () => {
+  const app = createApp({
+    callbackClient: {
+      sendStatus: async () => ({}),
+    },
+  });
+  const server = await startServer(app);
+
+  try {
+    const address = server.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/outbound`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tenant_id: 1,
+        to: '628111111111@s.whatsapp.net',
+        message_type: 'image',
+        payload: {
+          text: 'invalid type',
+        },
+      }),
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 422);
+    assert.equal(body.status, 'error');
+  } finally {
+    await stopServer(server);
+  }
+});
