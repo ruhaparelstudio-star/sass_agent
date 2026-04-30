@@ -275,3 +275,4 @@ Prinsip:
 - [x] Full suite pass via `docker compose exec -T app php artisan test`.
 - [x] Result snapshot: `288 passed`, `1318 assertions`, duration `7.24s`.
 - [x] Status seluruh fase `P0 -> P1 -> P2` ditutup berdasarkan bukti test + implementasi runtime saat ini.
+- [x] Mapping audit requirement -> runtime -> test didokumentasikan pada `PRDTDD/TRACEABILITY_MATRIX.md`.
