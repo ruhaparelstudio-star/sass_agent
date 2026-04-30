@@ -36,32 +36,32 @@ export default function WhatsappQr({ tenantId, qr, agent }) {
   }, [isAvailable, hasConnectingAgent])
 
   return (
-    <TenantLayout title="WhatsApp QR Scan">
+    <TenantLayout title="Pindai QR WhatsApp">
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">Koneksi WhatsApp Tenant</h2>
-            <p className="mt-1 text-xs text-slate-500">Tenant ID: {tenantId}</p>
+            <p className="mt-1 text-xs text-slate-500">ID Tenant: {tenantId}</p>
           </div>
           <Button type="button" variant="outline" leftIcon={RefreshCw} onClick={() => router.get('/tenant/whatsapp/qr')}>
-            Refresh QR
+            Muat Ulang QR
           </Button>
         </div>
         <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-          Slot agent: {agent?.used ?? 0} / {agent?.limit ?? 0} (sisa: {agent?.remaining ?? 0})
+          Slot agen: {agent?.used ?? 0} / {agent?.limit ?? 0} (sisa: {agent?.remaining ?? 0})
         </div>
 
         <div className="mt-3 rounded-md border border-slate-200 bg-white p-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Daftar Agent</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Daftar Agen</p>
           <div className="mt-2 space-y-2">
             {(agent?.accounts ?? []).length === 0 ? (
-              <p className="text-xs text-slate-500">Belum ada agent terdaftar.</p>
+              <p className="text-xs text-slate-500">Belum ada agen terdaftar.</p>
             ) : (
               (agent?.accounts ?? []).map((account) => (
                 <div key={account.id} className="rounded-md border border-slate-200 px-3 py-2">
-                  <p className="text-xs text-slate-700">Ref: {account.providerRef}</p>
+                  <p className="text-xs text-slate-700">Referensi: {account.providerRef}</p>
                   <p className="text-xs text-slate-700">Status: {account.status}</p>
-                  <p className="text-xs text-slate-500">Update: {account.updatedAt ?? '-'}</p>
+                  <p className="text-xs text-slate-500">Pembaruan: {account.updatedAt ?? '-'}</p>
                   <div className="mt-2 flex gap-2">
                     <Button
                       type="button"
@@ -71,7 +71,7 @@ export default function WhatsappQr({ tenantId, qr, agent }) {
                       disabled={!account.canDisconnect}
                       onClick={() => router.post(`/tenant/whatsapp/agents/${account.id}/disconnect`)}
                     >
-                      Disconnect
+                      Putuskan Koneksi
                     </Button>
                     <Button
                       type="button"
@@ -81,7 +81,7 @@ export default function WhatsappQr({ tenantId, qr, agent }) {
                       disabled={!account.canReconnect}
                       onClick={() => router.post(`/tenant/whatsapp/agents/${account.id}/reconnect`)}
                     >
-                      Reconnect
+                      Sambungkan Ulang
                     </Button>
                   </div>
                 </div>
@@ -97,20 +97,20 @@ export default function WhatsappQr({ tenantId, qr, agent }) {
               <p className="text-sm font-semibold">QR tersedia untuk dipindai</p>
             </div>
             <div className="rounded-lg border border-emerald-200 bg-white p-3">
-              <p className="text-xs text-slate-500">Kode QR payload</p>
+              <p className="text-xs text-slate-500">Payload Kode QR</p>
               {qrImageUrl ? (
                 <img
                   src={qrImageUrl}
-                  alt="WhatsApp QR"
+                  alt="Kode QR WhatsApp"
                   className="mt-3 h-56 w-56 rounded-md border border-slate-200 bg-white object-contain"
                 />
               ) : null}
               <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-all text-xs text-slate-800">{qr.code}</pre>
             </div>
             <div className="mt-3 text-xs text-slate-600">
-              <p>Provider: {qr.provider ?? '-'}</p>
+              <p>Penyedia: {qr.provider ?? '-'}</p>
               <p>Masa berlaku: {qr.expiresInSeconds ?? '-'} detik</p>
-              <p>Generated at: {qr.generatedAt ?? '-'}</p>
+              <p>Dibuat pada: {qr.generatedAt ?? '-'}</p>
             </div>
           </div>
         ) : (
@@ -121,8 +121,8 @@ export default function WhatsappQr({ tenantId, qr, agent }) {
             </div>
             <p className="text-xs text-slate-700">
               {canAddAgent
-                ? 'Klik Tambah Agent untuk membuat QR baru.'
-                : 'Slot agent pada subscription sudah habis. Upgrade plan untuk menambah agent baru.'}
+                ? 'Klik Tambah Agen untuk membuat QR baru.'
+                : 'Slot agen pada langganan sudah habis. Tingkatkan paket untuk menambah agen baru.'}
             </p>
             <div className="mt-3">
               <Button
@@ -131,7 +131,7 @@ export default function WhatsappQr({ tenantId, qr, agent }) {
                 onClick={() => router.post('/tenant/whatsapp/qr/connect')}
                 disabled={!canAddAgent}
               >
-                Tambah Agent
+                Tambah Agen
               </Button>
             </div>
           </div>

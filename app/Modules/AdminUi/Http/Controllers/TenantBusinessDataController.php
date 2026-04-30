@@ -91,7 +91,7 @@ class TenantBusinessDataController extends Controller
     public function storeServiceCatalog(Request $request): RedirectResponse
     {
         $tenantId = $this->resolveAuthorizedTenantId($request);
-        $payload = $request->validate($this->serviceCatalogRules($tenantId));
+        $payload = $request->validate($this->serviceCatalogRules($tenantId, null, false));
 
         $this->commandService->createServiceCatalog($tenantId, $payload);
 
@@ -119,7 +119,7 @@ class TenantBusinessDataController extends Controller
     public function storeProduct(Request $request): RedirectResponse
     {
         $tenantId = $this->resolveAuthorizedTenantId($request);
-        $payload = $request->validate($this->productRules($tenantId));
+        $payload = $request->validate($this->productRules($tenantId, null, false));
 
         $this->commandService->createProduct($tenantId, $payload);
 
@@ -147,7 +147,7 @@ class TenantBusinessDataController extends Controller
     public function storePackage(Request $request): RedirectResponse
     {
         $tenantId = $this->resolveAuthorizedTenantId($request);
-        $payload = $request->validate($this->packageRules($tenantId));
+        $payload = $request->validate($this->packageRules($tenantId, null, false));
 
         $this->commandService->createPackage($tenantId, $payload);
 
@@ -256,10 +256,10 @@ class TenantBusinessDataController extends Controller
         return back()->with('success', 'FAQ status updated.');
     }
 
-    private function serviceCatalogRules(int $tenantId, ?int $ignoreId = null): array
+    private function serviceCatalogRules(int $tenantId, ?int $ignoreId = null, bool $requireCode = true): array
     {
         return [
-            'code' => ['required', 'string', 'max:64', 'unique:service_catalogs,code,'.$ignoreId.',id,tenant_id,'.$tenantId],
+            'code' => [$requireCode ? 'required' : 'nullable', 'string', 'max:64', 'unique:service_catalogs,code,'.$ignoreId.',id,tenant_id,'.$tenantId],
             'name' => ['required', 'string', 'max:128'],
             'description' => ['nullable', 'string'],
             'sort_order' => ['nullable', 'integer', 'min:0'],
@@ -268,11 +268,11 @@ class TenantBusinessDataController extends Controller
         ];
     }
 
-    private function productRules(int $tenantId, ?int $ignoreId = null): array
+    private function productRules(int $tenantId, ?int $ignoreId = null, bool $requireCode = true): array
     {
         return [
             'service_catalog_id' => ['required', 'integer', 'exists:service_catalogs,id'],
-            'code' => ['required', 'string', 'max:64', 'unique:products,code,'.$ignoreId.',id,tenant_id,'.$tenantId],
+            'code' => [$requireCode ? 'required' : 'nullable', 'string', 'max:64', 'unique:products,code,'.$ignoreId.',id,tenant_id,'.$tenantId],
             'name' => ['required', 'string', 'max:128'],
             'description' => ['nullable', 'string'],
             'sort_order' => ['nullable', 'integer', 'min:0'],
@@ -281,11 +281,11 @@ class TenantBusinessDataController extends Controller
         ];
     }
 
-    private function packageRules(int $tenantId, ?int $ignoreId = null): array
+    private function packageRules(int $tenantId, ?int $ignoreId = null, bool $requireCode = true): array
     {
         return [
             'product_id' => ['required', 'integer', 'exists:products,id'],
-            'code' => ['required', 'string', 'max:64', 'unique:packages,code,'.$ignoreId.',id,tenant_id,'.$tenantId],
+            'code' => [$requireCode ? 'required' : 'nullable', 'string', 'max:64', 'unique:packages,code,'.$ignoreId.',id,tenant_id,'.$tenantId],
             'name' => ['required', 'string', 'max:128'],
             'description' => ['nullable', 'string'],
             'sort_order' => ['nullable', 'integer', 'min:0'],

@@ -8,10 +8,10 @@ export default function TenantLayout({ title, children }) {
   const role = props?.auth?.user?.role ?? 'tenant_admin'
 
   const menu = [
-    { href: '/tenant/dashboard', label: 'Dashboard', match: '/tenant/dashboard', icon: LayoutDashboard },
-    { href: '/tenant/inbox', label: 'Conversation Inbox', match: '/tenant/inbox', icon: MessagesSquare },
-    { href: '/tenant/business-data', label: 'Business Data', match: '/tenant/business-data', icon: Database },
-    { href: '/tenant/whatsapp/qr', label: 'WhatsApp QR Scan', match: '/tenant/whatsapp/qr', icon: QrCode },
+    { href: '/tenant/dashboard', label: 'Beranda', match: '/tenant/dashboard', icon: LayoutDashboard },
+    { href: '/tenant/inbox', label: 'Kotak Masuk Percakapan', match: '/tenant/inbox', icon: MessagesSquare },
+    { href: '/tenant/business-data', label: 'Data Bisnis', match: '/tenant/business-data', icon: Database },
+    { href: '/tenant/whatsapp/qr', label: 'Pindai QR WhatsApp', match: '/tenant/whatsapp/qr', icon: QrCode },
   ]
 
   const activeClass = 'bg-emerald-600 text-white shadow-sm'
@@ -21,7 +21,7 @@ export default function TenantLayout({ title, children }) {
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#d1fae5_0%,_#f8fafc_40%,_#f8fafc_100%)] text-slate-900">
       <div className="mx-auto w-full max-w-7xl px-4 py-6 lg:grid lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-6">
         <aside className="rounded-2xl border border-slate-200/80 bg-white/90 p-4 backdrop-blur">
-          <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">Tenant Admin</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">Admin Tenant</p>
           <p className="mt-1 text-xs uppercase tracking-wide text-slate-500">Peran {role}</p>
           <nav className="mt-4 space-y-1 text-sm">
             {menu.map((item) => {

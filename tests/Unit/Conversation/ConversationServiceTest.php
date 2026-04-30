@@ -115,8 +115,11 @@ class ConversationServiceTest extends TestCase
             'tenant_id' => $tenant->id,
             'conversation_id' => $conversation->id,
             'direction' => 'inbound',
+            'message_type' => 'text',
             'content' => 'Halo, saya mau tanya paket.',
         ]);
+
+        $this->assertNotNull($conversation->fresh()->last_message_at);
     }
 
     public function test_tenant_isolation_prevents_cross_tenant_reuse_and_write(): void

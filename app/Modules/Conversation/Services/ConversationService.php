@@ -35,8 +35,14 @@ class ConversationService
         if (! $conversation) {
             $conversation = Conversation::query()->create([
                 'tenant_id' => $tenant->id,
+                'wa_account_id' => null,
                 'customer_phone' => $normalizedPhone,
                 'status' => 'open',
+                'current_stage' => 'new',
+                'active_goal' => null,
+                'agent_mode' => 'assistant',
+                'memory_mode' => 'short',
+                'last_message_at' => null,
             ]);
         }
 
@@ -51,7 +57,11 @@ class ConversationService
         Tenant $tenant,
         MessageDirection $direction,
         string $content,
-        ?array $meta = null
+        ?array $meta = null,
+        string $messageType = 'text',
+        ?array $rawPayload = null,
+        ?array $groundingRefs = null,
+        ?int $decisionTraceId = null
     ): Message {
         $existsInTenant = Conversation::query()
             ->whereKey($conversation->id)
@@ -72,9 +82,17 @@ class ConversationService
             'tenant_id' => $tenant->id,
             'conversation_id' => $conversation->id,
             'direction' => $direction,
+            'message_type' => trim($messageType) !== '' ? trim($messageType) : 'text',
             'content' => $normalizedContent,
+            'raw_payload' => $rawPayload,
+            'grounding_refs' => $groundingRefs,
+            'decision_trace_id' => $decisionTraceId,
             'meta' => $meta,
         ]);
+
+        $conversation->forceFill([
+            'last_message_at' => $message->created_at,
+        ])->save();
 
         $this->conversationSummaryService->queueIfEligible($tenant, $conversation);
 
@@ -101,12 +119,21 @@ class ConversationService
             'retention_until' => null,
         ];
 
-        return ConversationState::query()->updateOrCreate(
+        $state = ConversationState::query()->updateOrCreate(
             [
                 'tenant_id' => $tenant->id,
                 'conversation_id' => $conversation->id,
             ],
             array_merge($defaults, $attributes)
         );
+
+        $conversation->forceFill([
+            'current_stage' => $state->current_stage,
+            'active_goal' => $state->active_goal,
+            'agent_mode' => $state->agent_mode,
+            'memory_mode' => $state->memory_mode,
+        ])->save();
+
+        return $state;
     }
 }

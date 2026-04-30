@@ -41,7 +41,7 @@ export default function PlansEdit({ plan }) {
       <Card className="mt-6">
         <h2 className="text-sm font-semibold uppercase text-slate-600">Tambah Fitur</h2>
         <form className="mt-3 grid gap-3 md:grid-cols-5" onSubmit={(e) => { e.preventDefault(); createFeature.post(`/superadmin/plans/${plan.id}/features`) }}>
-          <div><label className="mb-1 block text-xs font-medium">Code</label><Input value={createFeature.data.code} onChange={(e) => createFeature.setData('code', e.target.value)} required /></div>
+          <div><label className="mb-1 block text-xs font-medium">Kode</label><Input value={createFeature.data.code} onChange={(e) => createFeature.setData('code', e.target.value)} required /></div>
           <div><label className="mb-1 block text-xs font-medium">Nama</label><Input value={createFeature.data.name} onChange={(e) => createFeature.setData('name', e.target.value)} required /></div>
           <div><label className="mb-1 block text-xs font-medium">Nilai String</label><Input value={createFeature.data.value_string} onChange={(e) => createFeature.setData('value_string', e.target.value)} /></div>
           <div><label className="mb-1 block text-xs font-medium">Nilai Int</label><Input type="number" value={createFeature.data.value_int} onChange={(e) => createFeature.setData('value_int', e.target.value)} /></div>
@@ -56,7 +56,7 @@ export default function PlansEdit({ plan }) {
           {plan.features.length === 0 ? <p className="text-sm text-slate-500">Belum ada fitur.</p> : plan.features.map((feature) => (
             <div key={feature.id} className="rounded border border-slate-200 p-3">
               <form className="grid gap-3 md:grid-cols-6" onSubmit={(e) => submitFeatureUpdate(feature, e)}>
-                <div><label className="mb-1 block text-xs font-medium">Code</label><Input name="code" defaultValue={feature.code} required /></div>
+                <div><label className="mb-1 block text-xs font-medium">Kode</label><Input name="code" defaultValue={feature.code} required /></div>
                 <div><label className="mb-1 block text-xs font-medium">Nama</label><Input name="name" defaultValue={feature.name} required /></div>
                 <div><label className="mb-1 block text-xs font-medium">Nilai String</label><Input name="value_string" defaultValue={feature.value_string ?? ''} /></div>
                 <div><label className="mb-1 block text-xs font-medium">Nilai Int</label><Input type="number" name="value_int" defaultValue={feature.value_int ?? ''} /></div>

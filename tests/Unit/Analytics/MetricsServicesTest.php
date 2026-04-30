@@ -90,6 +90,15 @@ class MetricsServicesTest extends TestCase
             'result' => [],
         ]);
         ActionLog::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'action' => 'send_invoice',
+            'status' => 'executed',
+            'reason' => null,
+            'payload' => null,
+            'result' => [],
+        ]);
+        ActionLog::query()->create([
             'tenant_id' => $otherTenant->id,
             'conversation_id' => $otherConversation->id,
             'action' => 'send_booking_link',
@@ -129,6 +138,8 @@ class MetricsServicesTest extends TestCase
         $this->assertSame(1, $metrics['handoff_count']);
         $this->assertSame(1, $metrics['booking_action_count']);
         $this->assertSame(52, $metrics['token_usage_total']);
+        $this->assertSame(1, $metrics['invoice_action_count']);
+        $this->assertSame(1, $metrics['conversation_count']);
     }
 
     public function test_superadmin_metrics_query_aggregates_across_tenants(): void
@@ -214,12 +225,24 @@ class MetricsServicesTest extends TestCase
             'meta' => null,
         ]);
 
+        ActionLog::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversationOne->id,
+            'action' => 'send_invoice',
+            'status' => 'executed',
+            'reason' => null,
+            'payload' => null,
+            'result' => [],
+        ]);
+
         $summary = app(SuperadminMetricsQueryService::class)->getSummary();
 
         $this->assertSame(2, $summary['lead_count']);
         $this->assertSame(2, $summary['handoff_count']);
         $this->assertSame(2, $summary['booking_action_count']);
         $this->assertSame(30, $summary['token_usage_total']);
+        $this->assertSame(1, $summary['invoice_action_count']);
+        $this->assertSame(2, $summary['conversation_count']);
     }
 
     public function test_metrics_query_uses_decision_traces_as_token_source(): void

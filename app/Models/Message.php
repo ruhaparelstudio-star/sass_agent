@@ -12,7 +12,11 @@ class Message extends Model
         'tenant_id',
         'conversation_id',
         'direction',
+        'message_type',
         'content',
+        'raw_payload',
+        'grounding_refs',
+        'decision_trace_id',
         'meta',
     ];
 
@@ -20,6 +24,8 @@ class Message extends Model
     {
         return [
             'direction' => MessageDirection::class,
+            'raw_payload' => 'array',
+            'grounding_refs' => 'array',
             'meta' => 'array',
         ];
     }

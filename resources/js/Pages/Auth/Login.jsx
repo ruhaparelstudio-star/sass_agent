@@ -18,11 +18,11 @@ export default function Login() {
 
   return (
     <>
-      <Head title="Admin Login" />
+      <Head title="Masuk Admin" />
       <main className="grid min-h-screen place-items-center bg-[radial-gradient(circle_at_20%_10%,_#f9fbff_0%,_#f3f6fb_45%,_#ecf2fa_100%)] px-4 py-8">
         <section className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl shadow-slate-200/60">
           <p className="text-xs font-bold uppercase tracking-[0.12em] text-blue-700">SaaS Agent Console</p>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">Admin Login</h1>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">Masuk Admin</h1>
           <p className="mt-1 text-sm text-slate-600">Masuk sebagai tenant admin atau superadmin untuk mengelola workflow terkontrol.</p>
 
           {flash.login_error && (
@@ -47,7 +47,7 @@ export default function Login() {
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="password">Password</label>
+              <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="password">Kata Sandi</label>
               <input
                 id="password"
                 name="password"
@@ -67,7 +67,7 @@ export default function Login() {
                 checked={form.data.remember}
                 onChange={(event) => form.setData('remember', event.target.checked)}
               />
-              <span>Remember this device</span>
+              <span>Ingat perangkat ini</span>
             </label>
 
             <button
@@ -75,7 +75,7 @@ export default function Login() {
               className="w-full rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
               disabled={form.processing}
             >
-              {form.processing ? 'Signing in...' : 'Login'}
+              {form.processing ? 'Sedang masuk...' : 'Masuk'}
             </button>
           </form>
         </section>

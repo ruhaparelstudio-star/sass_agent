@@ -206,6 +206,9 @@ class TurnPipelineService
                 'location' => $entities['location'] ?? null,
                 'package_interest' => $entities['resolved_package_name'] ?? ($entities['package_query'] ?? null),
                 'budget' => $entities['budget_amount'] ?? null,
+                'budget_min' => $entities['budget_min'] ?? null,
+                'budget_max' => $entities['budget_max'] ?? null,
+                'invoice_reference' => $entities['invoice_reference'] ?? null,
             ]
         );
     }
@@ -300,12 +303,28 @@ class TurnPipelineService
                 $merged['budget_amount'] = $current['budget_amount'];
             }
 
+            if ($field === 'budget_min' && array_key_exists('budget_min', $current)) {
+                $merged['budget_min'] = $current['budget_min'];
+            }
+
+            if ($field === 'budget_max' && array_key_exists('budget_max', $current)) {
+                $merged['budget_max'] = $current['budget_max'];
+            }
+
             if ($field === 'customer_name' && array_key_exists('customer_name', $current)) {
                 $merged['customer_name'] = $current['customer_name'];
             }
 
             if ($field === 'location' && array_key_exists('location', $current)) {
                 $merged['location'] = $current['location'];
+            }
+
+            if ($field === 'event_type' && array_key_exists('event_type', $current)) {
+                $merged['event_type'] = $current['event_type'];
+            }
+
+            if ($field === 'invoice_reference' && array_key_exists('invoice_reference', $current)) {
+                $merged['invoice_reference'] = $current['invoice_reference'];
             }
         }
 

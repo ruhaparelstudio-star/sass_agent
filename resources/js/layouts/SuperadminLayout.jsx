@@ -8,7 +8,7 @@ export default function SuperadminLayout({ title, children }) {
   const role = props?.auth?.user?.role ?? 'superadmin'
 
   const menu = [
-    { href: '/superadmin/dashboard', label: 'Dashboard', match: '/superadmin/dashboard', icon: LayoutDashboard },
+    { href: '/superadmin/dashboard', label: 'Beranda', match: '/superadmin/dashboard', icon: LayoutDashboard },
     { href: '/superadmin/tenants', label: 'Manajemen Tenant', match: '/superadmin/tenants', icon: Building2 },
     { href: '/superadmin/plans', label: 'Manajemen Paket', match: '/superadmin/plans', icon: Package },
     { href: '/superadmin/conversations', label: 'Pemantauan Percakapan', match: '/superadmin/conversations', icon: MessageSquareMore },

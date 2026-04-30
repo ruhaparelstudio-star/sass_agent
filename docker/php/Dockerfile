@@ -20,6 +20,8 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /var/www/html
 
+COPY docker/php/uploads.ini /usr/local/etc/php/conf.d/uploads.ini
+
 # Align www-data UID/GID with common host user to keep bind-mounted
 # Laravel runtime directories writable from php-fpm workers.
 RUN usermod -u 1000 www-data \

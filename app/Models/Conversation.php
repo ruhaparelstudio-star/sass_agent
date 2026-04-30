@@ -11,9 +11,22 @@ class Conversation extends Model
 {
     protected $fillable = [
         'tenant_id',
+        'wa_account_id',
         'customer_phone',
         'status',
+        'current_stage',
+        'active_goal',
+        'agent_mode',
+        'memory_mode',
+        'last_message_at',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'last_message_at' => 'datetime',
+        ];
+    }
 
     public function tenant(): BelongsTo
     {

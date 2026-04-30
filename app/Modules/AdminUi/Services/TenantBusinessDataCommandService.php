@@ -14,6 +14,8 @@ class TenantBusinessDataCommandService
 {
     public function createServiceCatalog(int $tenantId, array $payload): ServiceCatalog
     {
+        $payload['code'] = $payload['code'] ?? $this->generateServiceCatalogCode($tenantId);
+
         return ServiceCatalog::query()->create(array_merge($payload, ['tenant_id' => $tenantId]));
     }
 
@@ -33,6 +35,7 @@ class TenantBusinessDataCommandService
     {
         $catalog = ServiceCatalog::query()->findOrFail($payload['service_catalog_id']);
         $this->assertTenantRecord($tenantId, (int) $catalog->tenant_id);
+        $payload['code'] = $payload['code'] ?? $this->generateCodeByPrefix(Product::class, $tenantId, 'PRD-');
 
         return Product::query()->create(array_merge($payload, ['tenant_id' => $tenantId]));
     }
@@ -55,6 +58,7 @@ class TenantBusinessDataCommandService
     {
         $product = Product::query()->findOrFail($payload['product_id']);
         $this->assertTenantRecord($tenantId, (int) $product->tenant_id);
+        $payload['code'] = $payload['code'] ?? $this->generateCodeByPrefix(Package::class, $tenantId, 'PKG-');
 
         return Package::query()->create(array_merge($payload, ['tenant_id' => $tenantId]));
     }
@@ -139,5 +143,33 @@ class TenantBusinessDataCommandService
         if ($expectedTenantId !== $recordTenantId) {
             throw new HttpException(403, 'Forbidden tenant scope.');
         }
+    }
+
+    private function generateServiceCatalogCode(int $tenantId): string
+    {
+        return $this->generateCodeByPrefix(ServiceCatalog::class, $tenantId, 'CAT-');
+    }
+
+    private function generateCodeByPrefix(string $modelClass, int $tenantId, string $prefix): string
+    {
+        $codes = $modelClass::query()
+            ->where('tenant_id', $tenantId)
+            ->where('code', 'like', $prefix.'%')
+            ->pluck('code');
+
+        $maxNumber = 0;
+        foreach ($codes as $code) {
+            $pattern = '/^'.preg_quote($prefix, '/').'(\d{4})$/';
+            if (preg_match($pattern, (string) $code, $matches) === 1) {
+                $maxNumber = max($maxNumber, (int) $matches[1]);
+            }
+        }
+
+        do {
+            $maxNumber++;
+            $candidate = $prefix.str_pad((string) $maxNumber, 4, '0', STR_PAD_LEFT);
+        } while ($modelClass::query()->where('tenant_id', $tenantId)->where('code', $candidate)->exists());
+
+        return $candidate;
     }
 }

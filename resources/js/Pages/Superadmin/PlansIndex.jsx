@@ -30,7 +30,7 @@ export default function PlansIndex({ plans, tenants, subscriptionStatuses }) {
       <Card className="shadow-sm">
         <div className="mb-3 flex items-center justify-between">
           <div>
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">Plan Catalog</h2>
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">Katalog Paket</h2>
             <p className="mt-1 text-xs text-slate-500">Kelola daftar paket dan fitur sebagai data terstruktur untuk keputusan sistem yang tervalidasi.</p>
           </div>
           <Link href="/superadmin/plans/create"><Button leftIcon={Plus}>Buat Paket</Button></Link>
@@ -84,8 +84,8 @@ export default function PlansIndex({ plans, tenants, subscriptionStatuses }) {
               </Select>
               {errors?.status ? <p className="mt-1 text-xs text-red-600">{errors.status}</p> : null}
             </div>
-            <div><label className="mb-1 block text-xs font-medium">Starts At</label><Input type="datetime-local" value={assignForm.data.starts_at} onChange={(e) => assignForm.setData('starts_at', e.target.value)} />{errors?.starts_at ? <p className="mt-1 text-xs text-red-600">{errors.starts_at}</p> : null}</div>
-            <div><label className="mb-1 block text-xs font-medium">Ends At</label><Input type="datetime-local" value={assignForm.data.ends_at} onChange={(e) => assignForm.setData('ends_at', e.target.value)} />{errors?.ends_at ? <p className="mt-1 text-xs text-red-600">{errors.ends_at}</p> : null}</div>
+            <div><label className="mb-1 block text-xs font-medium">Mulai Pada</label><Input type="datetime-local" value={assignForm.data.starts_at} onChange={(e) => assignForm.setData('starts_at', e.target.value)} />{errors?.starts_at ? <p className="mt-1 text-xs text-red-600">{errors.starts_at}</p> : null}</div>
+            <div><label className="mb-1 block text-xs font-medium">Berakhir Pada</label><Input type="datetime-local" value={assignForm.data.ends_at} onChange={(e) => assignForm.setData('ends_at', e.target.value)} />{errors?.ends_at ? <p className="mt-1 text-xs text-red-600">{errors.ends_at}</p> : null}</div>
             <Button type="submit" disabled={assignForm.processing} leftIcon={Link2}>Tetapkan Langganan</Button>
           </form>
         </Card>

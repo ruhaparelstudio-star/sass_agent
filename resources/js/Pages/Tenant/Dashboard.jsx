@@ -6,18 +6,18 @@ import { MessagesSquare } from 'lucide-react'
 
 export default function Dashboard({ summary, recentConversations, recentHandoffs, recentNotifications }) {
   const cards = [
-    { label: 'Total Conversations', value: summary?.conversations_total ?? 0 },
-    { label: 'Open Conversations', value: summary?.conversations_open ?? 0 },
-    { label: 'Pending Handoffs', value: summary?.handoffs_pending ?? 0 },
-    { label: 'Failed Notifications', value: summary?.notifications_failed ?? 0 },
-    { label: 'Leads', value: summary?.lead_count ?? 0 },
-    { label: 'Handoffs (All)', value: summary?.handoff_count ?? 0 },
-    { label: 'Booking Executed', value: summary?.booking_action_count ?? 0 },
-    { label: 'Token Usage', value: summary?.token_usage_total ?? 0 },
+    { label: 'Total Percakapan', value: summary?.conversations_total ?? 0 },
+    { label: 'Percakapan Terbuka', value: summary?.conversations_open ?? 0 },
+    { label: 'Handoff Tertunda', value: summary?.handoffs_pending ?? 0 },
+    { label: 'Notifikasi Gagal', value: summary?.notifications_failed ?? 0 },
+    { label: 'Prospek', value: summary?.lead_count ?? 0 },
+    { label: 'Semua Handoff', value: summary?.handoff_count ?? 0 },
+    { label: 'Booking Tereksekusi', value: summary?.booking_action_count ?? 0 },
+    { label: 'Penggunaan Token', value: summary?.token_usage_total ?? 0 },
   ]
 
   return (
-    <TenantLayout title="Tenant Dashboard">
+    <TenantLayout title="Beranda Tenant">
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {cards.map((card) => (
           <div key={card.label} className="rounded-xl border border-slate-200 bg-white p-4">
@@ -29,37 +29,37 @@ export default function Dashboard({ summary, recentConversations, recentHandoffs
 
       <section className="mt-6 grid gap-4 lg:grid-cols-3">
         <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="font-semibold">Recent Conversations</h2>
+          <h2 className="font-semibold">Percakapan Terbaru</h2>
           <ul className="mt-3 space-y-2 text-sm">
             {(recentConversations ?? []).map((row) => (
               <li key={row.id}>{row.customer_phone} ({row.status})</li>
             ))}
-            {(recentConversations ?? []).length === 0 && <li className="text-slate-500">No data</li>}
+            {(recentConversations ?? []).length === 0 && <li className="text-slate-500">Belum ada data</li>}
           </ul>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="font-semibold">Recent Handoffs</h2>
+          <h2 className="font-semibold">Handoff Terbaru</h2>
           <ul className="mt-3 space-y-2 text-sm">
             {(recentHandoffs ?? []).map((row) => (
               <li key={row.id}>#{row.conversation_id} {row.reason_code} ({row.status})</li>
             ))}
-            {(recentHandoffs ?? []).length === 0 && <li className="text-slate-500">No data</li>}
+            {(recentHandoffs ?? []).length === 0 && <li className="text-slate-500">Belum ada data</li>}
           </ul>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="font-semibold">Recent Notifications</h2>
+          <h2 className="font-semibold">Notifikasi Terbaru</h2>
           <ul className="mt-3 space-y-2 text-sm">
             {(recentNotifications ?? []).map((row) => (
               <li key={row.id}>{row.type} ({row.status})</li>
             ))}
-            {(recentNotifications ?? []).length === 0 && <li className="text-slate-500">No data</li>}
+            {(recentNotifications ?? []).length === 0 && <li className="text-slate-500">Belum ada data</li>}
           </ul>
         </div>
       </section>
 
       <div className="mt-6">
         <Link href="/tenant/inbox">
-          <Button leftIcon={MessagesSquare}>Open Conversation Inbox</Button>
+          <Button leftIcon={MessagesSquare}>Buka Kotak Masuk Percakapan</Button>
         </Link>
       </div>
     </TenantLayout>

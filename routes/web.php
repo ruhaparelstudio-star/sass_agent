@@ -73,6 +73,7 @@ Route::middleware('auth')->group(function (): void {
     Route::get('/tenant/whatsapp/qr/image', [TenantWhatsappQrController::class, 'image']);
     Route::post('/tenant/inbox/{conversation}/handoff/{handoff}/resolve', [TenantConversationInboxController::class, 'resolveHandoff']);
     Route::post('/tenant/inbox/{conversation}/handoff/{handoff}/resume', [TenantConversationInboxController::class, 'resumeAi']);
+    Route::post('/tenant/inbox/{conversation}/invoices', [TenantConversationInboxController::class, 'storeInvoice']);
 
     Route::get('/tenant/business-data', [TenantBusinessDataController::class, 'show']);
     Route::post('/tenant/business-data/service-catalogs', [TenantBusinessDataController::class, 'storeServiceCatalog']);

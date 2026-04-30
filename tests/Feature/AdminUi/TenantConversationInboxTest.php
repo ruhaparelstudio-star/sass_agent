@@ -5,10 +5,13 @@ namespace Tests\Feature\AdminUi;
 use App\Models\Conversation;
 use App\Models\ConversationContext;
 use App\Models\ConversationState;
+use App\Models\DecisionTrace;
 use App\Models\Handoff;
+use App\Models\Invoice;
 use App\Models\LeadProfile;
 use App\Models\Message;
 use App\Models\Tenant;
+use App\Models\TenantAsset;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Inertia\Testing\AssertableInertia as Assert;
@@ -33,6 +36,8 @@ class TenantConversationInboxTest extends TestCase
                 ->has('messages')
                 ->has('handoffs')
                 ->has('contextPanel')
+                ->has('invoiceAssets')
+                ->has('invoices')
                 ->where('query', '')
             );
     }
@@ -97,13 +102,30 @@ class TenantConversationInboxTest extends TestCase
             'recommended_next_action' => 'booking',
         ]);
 
-        Message::query()->create([
+        $inboundMessage = Message::query()->create([
             'tenant_id' => $tenantOne->id,
             'conversation_id' => $selectedConversation->id,
             'direction' => 'inbound',
+            'message_type' => 'text',
             'content' => 'Halo, saya mau tanya paket.',
+            'grounding_refs' => ['catalog:package'],
             'meta' => null,
         ]);
+
+        $trace = DecisionTrace::query()->create([
+            'tenant_id' => $tenantOne->id,
+            'conversation_id' => $selectedConversation->id,
+            'message_id' => $inboundMessage->id,
+            'trace_key' => 'inbound_turn',
+            'token_usage_total' => 0,
+            'validators_json' => ['order' => ['policy', 'grounding', 'permission', 'mode']],
+            'blocked_actions_json' => [],
+            'grounding_refs_json' => ['catalog:package'],
+            'final_reply' => 'ok',
+            'meta' => ['decision' => ['trace' => ['fallback_reason' => null]]],
+        ]);
+
+        $inboundMessage->forceFill(['decision_trace_id' => $trace->id])->save();
 
         $pendingHandoff = Handoff::query()->create([
             'tenant_id' => $tenantOne->id,
@@ -138,6 +160,8 @@ class TenantConversationInboxTest extends TestCase
                 ->where('handoffs.0.id', $pendingHandoff->id)
                 ->where('handoffs.0.can_resolve_handoff', true)
                 ->where('handoffs.0.can_resume_ai', false)
+                ->where('messages.0.message_type', 'text')
+                ->where('messages.0.trace.validators.order.0', 'policy')
             );
     }
 
@@ -205,6 +229,74 @@ class TenantConversationInboxTest extends TestCase
             'conversation_id' => $conversation->id,
             'agent_mode' => 'ai',
         ]);
+    }
+
+    public function test_tenant_admin_can_create_invoice_for_selected_lead_using_invoice_asset(): void
+    {
+        [$tenant, $tenantAdmin] = $this->createTenantAdmin('tenant-one');
+
+        $conversation = Conversation::query()->create([
+            'tenant_id' => $tenant->id,
+            'customer_phone' => '+620200',
+            'status' => 'open',
+        ]);
+
+        $asset = TenantAsset::query()->create([
+            'tenant_id' => $tenant->id,
+            'asset_type' => 'invoice',
+            'display_name' => 'Invoice Standard',
+            'original_filename' => 'invoice-standard.pdf',
+            'storage_disk' => 'private',
+            'storage_path' => 'tenant-assets/invoice/1/invoice-standard.pdf',
+            'uploaded_by_user_id' => $tenantAdmin->id,
+            'is_active' => true,
+        ]);
+
+        $response = $this->actingAs($tenantAdmin)
+            ->post('/tenant/inbox/'.$conversation->id.'/invoices', [
+                'tenant_asset_id' => $asset->id,
+            ]);
+
+        $response->assertRedirect('/tenant/inbox?conversation_id='.$conversation->id);
+
+        $this->assertDatabaseHas('invoices', [
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'tenant_asset_id' => $asset->id,
+            'customer_phone' => '+620200',
+            'status' => 'ready',
+        ]);
+    }
+
+    public function test_tenant_admin_cannot_create_invoice_using_other_tenant_asset(): void
+    {
+        [$tenantOne, $tenantAdmin] = $this->createTenantAdmin('tenant-one');
+        [$tenantTwo] = $this->createTenantAdmin('tenant-two');
+
+        $conversation = Conversation::query()->create([
+            'tenant_id' => $tenantOne->id,
+            'customer_phone' => '+620201',
+            'status' => 'open',
+        ]);
+
+        $otherAsset = TenantAsset::query()->create([
+            'tenant_id' => $tenantTwo->id,
+            'asset_type' => 'invoice',
+            'display_name' => 'Invoice Tenant Two',
+            'original_filename' => 'invoice-tenant-two.pdf',
+            'storage_disk' => 'private',
+            'storage_path' => 'tenant-assets/invoice/2/invoice-tenant-two.pdf',
+            'uploaded_by_user_id' => null,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($tenantAdmin)
+            ->post('/tenant/inbox/'.$conversation->id.'/invoices', [
+                'tenant_asset_id' => $otherAsset->id,
+            ])
+            ->assertForbidden();
+
+        $this->assertDatabaseCount('invoices', 0);
     }
 
     private function createTenantAdmin(string $slug): array

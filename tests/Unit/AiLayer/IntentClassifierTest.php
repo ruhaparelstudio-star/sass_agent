@@ -187,6 +187,49 @@ class IntentClassifierTest extends TestCase
         $this->assertSame(20000000, $result->entities['budget_amount']);
     }
 
+    public function test_entity_normalization_expands_for_phase_p2_b1(): void
+    {
+        $tenant = $this->createTenantWithPackage('tenant-one', 'gold', 'Gold Package');
+
+        $classifier = app(DeterministicIntentClassifier::class);
+
+        $result = $classifier->classify(
+            $tenant->id,
+            'Nama saya Ayu, nikah di Bandung 21/12/2026, budget 10-15 juta, invoice INV-123',
+            '{"intent":"booking_intent","confidence":0.9,"entities":{"customer_name":"Ayu","event_type":"Wedding","event_date":"21/12/2026","location":"Bandung","package_interest":"Gold Package","budget_min":"10 juta","budget_max":"15 juta","invoice_reference":"INV-123"}}'
+        );
+
+        $this->assertSame('Ayu', $result->entities['customer_name']);
+        $this->assertSame('wedding', $result->entities['event_type']);
+        $this->assertSame('bandung', $result->entities['location']);
+        $this->assertSame('2026-12-21', $result->entities['event_date_iso']);
+        $this->assertSame(10000000, $result->entities['budget_min']);
+        $this->assertSame(15000000, $result->entities['budget_max']);
+        $this->assertSame('INV-123', $result->entities['invoice_reference']);
+        $this->assertSame('gold package', $result->entities['package_interest']);
+        $this->assertSame('gold', $result->entities['resolved_package_code']);
+        $this->assertSame('Gold Package', $result->entities['resolved_package_name']);
+    }
+
+    public function test_correction_fields_accept_expanded_entity_keys(): void
+    {
+        $tenant = $this->createTenantWithPackage('tenant-one', 'gold', 'Gold Package');
+
+        $classifier = app(DeterministicIntentClassifier::class);
+
+        $result = $classifier->classify(
+            $tenant->id,
+            'koreksi lokasi jadi Jakarta dan event type engagement',
+            '{"intent":"correction","confidence":0.8,"entities":{"correction":true,"corrected_fields":["location","event_type","invoice_reference","budget_min","budget_max"]}}'
+        );
+
+        $this->assertTrue($result->entities['is_correction']);
+        $this->assertSame(
+            ['location', 'event_type', 'invoice_reference', 'budget_min', 'budget_max'],
+            $result->entities['corrected_fields']
+        );
+    }
+
     public function test_ask_pricelist_intent_is_recognized(): void
     {
         $tenant = $this->createTenantWithPackage('tenant-one', 'gold', 'Gold Package');

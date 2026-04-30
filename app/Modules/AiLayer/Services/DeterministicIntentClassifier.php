@@ -35,12 +35,18 @@ class DeterministicIntentClassifier implements IntentClassifierContract
         }
 
         $packageQuery = $this->normalizeText($decoded['entities']['package_query'] ?? null);
+        $packageInterest = $this->normalizeText($decoded['entities']['package_interest'] ?? null);
+        if ($packageQuery === null) {
+            $packageQuery = $packageInterest;
+        }
         $customerName = $this->normalizeName($decoded['entities']['customer_name'] ?? ($decoded['entities']['name'] ?? null));
         $eventType = $this->normalizeText($decoded['entities']['event_type'] ?? null);
         $eventDateIso = $this->parseEventDateIso($decoded['entities']['event_date'] ?? null);
         $location = $this->normalizeText($decoded['entities']['location'] ?? null);
         $budgetAmount = $this->parseBudgetAmount($decoded['entities']['budget'] ?? null);
-        $invoiceReference = $this->normalizeText($decoded['entities']['invoice_reference'] ?? null);
+        $budgetMin = $this->parseBudgetAmount($decoded['entities']['budget_min'] ?? null);
+        $budgetMax = $this->parseBudgetAmount($decoded['entities']['budget_max'] ?? null);
+        $invoiceReference = $this->normalizeReference($decoded['entities']['invoice_reference'] ?? null);
         [$isCorrection, $correctedFields] = $this->detectCorrection(
             $userMessage,
             $decoded['entities']
@@ -63,6 +69,9 @@ class DeterministicIntentClassifier implements IntentClassifierContract
                 'event_date_iso' => $eventDateIso,
                 'location' => $location,
                 'budget_amount' => $budgetAmount,
+                'budget_min' => $budgetMin,
+                'budget_max' => $budgetMax,
+                'package_interest' => $packageInterest,
                 'invoice_reference' => $invoiceReference,
                 'is_correction' => $isCorrection,
                 'corrected_fields' => $correctedFields,
@@ -114,6 +123,20 @@ class DeterministicIntentClassifier implements IntentClassifierContract
         $normalized = trim($value);
 
         return $normalized === '' ? null : $normalized;
+    }
+
+    private function normalizeReference(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $normalized = trim($value);
+        if ($normalized === '') {
+            return null;
+        }
+
+        return mb_strtoupper($normalized);
     }
 
     private function resolvePackageAlias(int $tenantId, ?string $packageQuery): array
@@ -260,8 +283,16 @@ class DeterministicIntentClassifier implements IntentClassifierContract
             'package' => 'package_query',
             'event_date' => 'event_date',
             'event_date_iso' => 'event_date',
+            'event_type' => 'event_type',
             'budget' => 'budget',
             'budget_amount' => 'budget',
+            'budget_min' => 'budget_min',
+            'budget_max' => 'budget_max',
+            'invoice_reference' => 'invoice_reference',
+            'package_interest' => 'package_query',
+            'name' => 'customer_name',
+            'customer_name' => 'customer_name',
+            'location' => 'location',
         ];
 
         $normalized = [];

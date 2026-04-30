@@ -75,6 +75,12 @@ class WaInboundTurnOrchestratorServiceTest extends TestCase
             ->firstOrFail();
 
         $decision = $trace->meta['decision'] ?? [];
+        $this->assertSame($decision, $trace->decision_json);
+        $this->assertSame($decision['blocked_actions'] ?? [], $trace->blocked_actions_json);
+        $this->assertSame($decision['grounding_refs'] ?? [], $trace->grounding_refs_json);
+        $this->assertSame($decision['trace']['validator_order'] ?? [], $trace->validators_json['order'] ?? []);
+        $this->assertSame($decision['trace']['fallback_reason'] ?? null, $trace->validators_json['fallback_reason'] ?? null);
+        $this->assertNotNull($trace->final_reply);
         $this->assertSame('ask_pricelist', $decision['intent'] ?? null);
         $this->assertArrayHasKey('confidence', $decision);
         $this->assertArrayHasKey('decision', $decision);
@@ -109,6 +115,15 @@ class WaInboundTurnOrchestratorServiceTest extends TestCase
             'direction' => 'outbound',
             'content' => 'Minta nama lengkap pelanggan terlebih dahulu sebelum melanjutkan.',
         ]);
+
+        $outbound = \App\Models\Message::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('direction', 'outbound')
+            ->latest('id')
+            ->firstOrFail();
+
+        $this->assertSame($trace->id, $outbound->decision_trace_id);
+        $this->assertIsArray($outbound->grounding_refs);
     }
 
     public function test_inbound_turn_orchestrator_is_idempotent_per_inbound_message(): void

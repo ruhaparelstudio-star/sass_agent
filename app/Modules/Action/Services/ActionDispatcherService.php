@@ -133,6 +133,22 @@ class ActionDispatcherService
                 'action_log_id' => $createdActionLog->id,
                 'trace_key' => 'action_dispatch',
                 'token_usage_total' => max(0, (int) ($meta['token_usage_total'] ?? 0)),
+                'decision_json' => [
+                    'action' => $action,
+                    'status' => $status,
+                    'reason' => $reason,
+                ],
+                'validators_json' => [
+                    'order' => ['policy', 'grounding', 'permission', 'mode'],
+                    'status' => $status === 'blocked' ? 'blocked' : 'passed',
+                ],
+                'blocked_actions_json' => $status === 'blocked'
+                    ? [['action' => $action, 'reason' => $reason ?? 'blocked']]
+                    : [],
+                'model_name' => null,
+                'token_usage_json' => [
+                    'total' => max(0, (int) ($meta['token_usage_total'] ?? 0)),
+                ],
                 'meta' => [
                     'action' => $action,
                     'status' => $status,

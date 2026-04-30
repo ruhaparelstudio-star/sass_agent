@@ -5,6 +5,8 @@ namespace App\Modules\AdminUi\Http\Controllers;
 use App\Enums\UserRole;
 use App\Http\Controllers\Controller;
 use App\Models\Conversation;
+use App\Models\Invoice;
+use App\Models\TenantAsset;
 use App\Modules\AdminUi\Services\TenantConversationInboxQueryService;
 use App\Modules\AdminUi\Services\TenantHandoffResolutionService;
 use App\Modules\Tenancy\Services\TenantContextResolver;
@@ -50,7 +52,40 @@ class TenantConversationInboxController extends Controller
             'messages' => $inboxData['messages'],
             'handoffs' => $inboxData['handoffs'],
             'contextPanel' => $inboxData['contextPanel'],
+            'invoiceAssets' => $inboxData['invoiceAssets'],
+            'invoices' => $inboxData['invoices'],
         ]);
+    }
+
+    public function storeInvoice(Request $request, int $conversation): RedirectResponse
+    {
+        $tenantId = $this->resolveAuthorizedTenantId($request);
+        $conversationRow = Conversation::query()->findOrFail($conversation);
+        if ((int) $conversationRow->tenant_id !== $tenantId) {
+            throw new HttpException(403, 'Forbidden tenant scope.');
+        }
+
+        $payload = $request->validate([
+            'tenant_asset_id' => ['required', 'integer', 'exists:tenant_assets,id'],
+        ]);
+
+        $asset = TenantAsset::query()->findOrFail((int) $payload['tenant_asset_id']);
+        if ((int) $asset->tenant_id !== $tenantId || $asset->asset_type !== 'invoice') {
+            throw new HttpException(403, 'Forbidden tenant scope.');
+        }
+
+        Invoice::query()->create([
+            'tenant_id' => $tenantId,
+            'conversation_id' => $conversationRow->id,
+            'tenant_asset_id' => $asset->id,
+            'customer_phone' => (string) $conversationRow->customer_phone,
+            'status' => 'ready',
+            'issued_at' => now(),
+            'last_sent_at' => null,
+        ]);
+
+        return redirect('/tenant/inbox?conversation_id='.$conversationRow->id)
+            ->with('success', 'Invoice untuk lead berhasil dibuat.');
     }
 
     public function resolveHandoff(Request $request, int $conversation, int $handoff): RedirectResponse

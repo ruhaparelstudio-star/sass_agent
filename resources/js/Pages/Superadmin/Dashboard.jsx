@@ -12,8 +12,8 @@ export default function Dashboard({ summary, recentTenants }) {
   ]
 
   return (
-    <SuperadminLayout title="Dashboard Super Admin">
-      <Head title="Dashboard Super Admin" />
+    <SuperadminLayout title="Beranda Superadmin">
+      <Head title="Beranda Superadmin" />
 
       <section className="grid gap-4 md:grid-cols-3">
         <Card><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Tenant</p><p className="mt-2 text-3xl font-bold">{summary.tenants_total}</p></Card>
@@ -24,8 +24,8 @@ export default function Dashboard({ summary, recentTenants }) {
       <section className="mt-4 grid gap-4 md:grid-cols-4">
         <Card><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Lead</p><p className="mt-2 text-2xl font-bold">{summary.lead_count ?? 0}</p></Card>
         <Card><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Handoff</p><p className="mt-2 text-2xl font-bold">{summary.handoff_count ?? 0}</p></Card>
-        <Card><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Booking Executed</p><p className="mt-2 text-2xl font-bold">{summary.booking_action_count ?? 0}</p></Card>
-        <Card><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Token Usage</p><p className="mt-2 text-2xl font-bold">{summary.token_usage_total ?? 0}</p></Card>
+        <Card><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Booking Tereksekusi</p><p className="mt-2 text-2xl font-bold">{summary.booking_action_count ?? 0}</p></Card>
+        <Card><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Penggunaan Token</p><p className="mt-2 text-2xl font-bold">{summary.token_usage_total ?? 0}</p></Card>
       </section>
 
       <Card className="mt-6">

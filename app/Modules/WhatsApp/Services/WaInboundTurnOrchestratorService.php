@@ -74,14 +74,17 @@ class WaInboundTurnOrchestratorService
 
             $executedSteps[] = 'check_tenant_status_and_plan';
             $conversation = $this->conversationService->findOrCreateActiveConversation($tenant, $customerPhone);
+            if ($conversation->wa_account_id === null && $inboundMessage->wa_account_id !== null) {
+                $conversation->forceFill(['wa_account_id' => $inboundMessage->wa_account_id])->save();
+            }
             $state = $this->conversationService->upsertState($conversation, $tenant);
             $executedSteps[] = 'load_conversation_and_state';
 
-            $this->conversationService->storeMessage($conversation, $tenant, MessageDirection::Inbound, $text, [
+            $inboundConversationMessage = $this->conversationService->storeMessage($conversation, $tenant, MessageDirection::Inbound, $text, [
                 'source' => 'whatsapp',
                 'wa_inbound_message_id' => $inboundMessage->id,
                 'provider_message_id' => $inboundMessage->provider_message_id,
-            ]);
+            ], 'text', $inboundMessage->payload ?? null);
 
             $features = $this->featureGateService->resolveForTenant($tenant->id);
             $context = $this->buildContext($tenant, $conversation, $state->active_goal, $features, $text, $customerPhone);
@@ -128,22 +131,40 @@ class WaInboundTurnOrchestratorService
                 $pipeline
             );
 
-            $this->conversationService->storeMessage($conversation, $tenant, MessageDirection::Outbound, $replyText, [
-                'source' => 'whatsapp_turn_pipeline',
-                'wa_inbound_message_id' => $inboundMessage->id,
-                'dispatch_status' => $dispatchResult['status'] ?? null,
-                'dispatch_reason' => $dispatchResult['reason'] ?? null,
-                'handoff_dispatch_status' => $handoffDispatch['status'] ?? null,
-                'handoff_dispatch_reason' => $handoffDispatch['reason'] ?? null,
-            ]);
-
             $executedSteps[] = 'store_trace';
-            DecisionTrace::query()->create([
+            $trace = DecisionTrace::query()->create([
                 'tenant_id' => $tenant->id,
                 'conversation_id' => $conversation->id,
+                'message_id' => $inboundConversationMessage->id,
                 'action_log_id' => null,
                 'trace_key' => 'inbound_turn',
                 'token_usage_total' => 0,
+                'input_snapshot_json' => [
+                    'user_message' => $text,
+                    'provider_message_id' => $inboundMessage->provider_message_id,
+                    'wa_inbound_message_id' => $inboundMessage->id,
+                    'customer_phone' => $customerPhone,
+                ],
+                'interpretation_json' => [
+                    'intent' => $pipeline['intent'] ?? null,
+                    'confidence' => $pipeline['confidence'] ?? null,
+                    'entities' => $pipeline['entities'] ?? [],
+                    'fallback_reason' => $pipeline['trace']['fallback_reason'] ?? null,
+                ],
+                'decision_json' => $pipeline,
+                'validators_json' => [
+                    'order' => $pipeline['trace']['validator_order'] ?? [],
+                    'status' => (($pipeline['blocked_actions'] ?? []) === []) ? 'passed' : 'blocked',
+                    'fallback_reason' => $pipeline['trace']['fallback_reason'] ?? null,
+                ],
+                'blocked_actions_json' => $pipeline['blocked_actions'] ?? [],
+                'grounding_refs_json' => $pipeline['grounding_refs'] ?? [],
+                'final_reply' => $replyText,
+                'model_name' => null,
+                'token_usage_json' => [
+                    'total' => 0,
+                    'source' => 'not_captured',
+                ],
                 'meta' => [
                     'inbound_message_id' => $inboundMessage->id,
                     'provider_message_id' => $inboundMessage->provider_message_id,
@@ -154,6 +175,17 @@ class WaInboundTurnOrchestratorService
                     'pipeline_steps' => $this->normalizeStepOrder($executedSteps),
                 ],
             ]);
+
+            $outboundConversationMessage = $this->conversationService->storeMessage($conversation, $tenant, MessageDirection::Outbound, $replyText, [
+                'source' => 'whatsapp_turn_pipeline',
+                'wa_inbound_message_id' => $inboundMessage->id,
+                'dispatch_status' => $dispatchResult['status'] ?? null,
+                'dispatch_reason' => $dispatchResult['reason'] ?? null,
+                'handoff_dispatch_status' => $handoffDispatch['status'] ?? null,
+                'handoff_dispatch_reason' => $handoffDispatch['reason'] ?? null,
+            ], 'text', null, $pipeline['grounding_refs'] ?? [], $trace->id);
+
+            $trace->forceFill(['message_id' => $outboundConversationMessage->id])->save();
         });
     }
 
