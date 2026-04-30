@@ -8,6 +8,8 @@ use App\Models\Package;
 use App\Models\Price;
 use App\Models\Product;
 use App\Models\ServiceCatalog;
+use App\Models\BookingSetting;
+use App\Models\CalendarSetting;
 
 class TenantBusinessDataQueryService
 {
@@ -16,6 +18,11 @@ class TenantBusinessDataQueryService
      */
     public function getPageData(int $tenantId): array
     {
+        $calendarSetting = CalendarSetting::query()
+            ->where('tenant_id', $tenantId)
+            ->first();
+        $businessHours = $this->resolveBusinessHoursPolicy($calendarSetting);
+
         return [
             'serviceCatalogs' => ServiceCatalog::query()
                 ->where('tenant_id', $tenantId)
@@ -53,6 +60,35 @@ class TenantBusinessDataQueryService
                 ->orderBy('id')
                 ->get(['id', 'tenant_id', 'question', 'answer', 'sort_order', 'is_active', 'active_from', 'active_until'])
                 ->toArray(),
+            'bookingSettings' => BookingSetting::query()
+                ->where('tenant_id', $tenantId)
+                ->orderBy('sort_order')
+                ->orderBy('id')
+                ->get(['id', 'tenant_id', 'booking_url', 'sort_order', 'is_active', 'active_from', 'active_until'])
+                ->toArray(),
+            'businessHoursPolicy' => $businessHours,
+        ];
+    }
+
+    private function resolveBusinessHoursPolicy(?CalendarSetting $calendarSetting): array
+    {
+        $rules = is_array($calendarSetting?->rules) ? $calendarSetting->rules : [];
+        $policy = is_array($rules['business_hours'] ?? null) ? $rules['business_hours'] : [];
+
+        $days = $policy['days'] ?? ['mon', 'tue', 'wed', 'thu', 'fri'];
+        if (! is_array($days)) {
+            $days = ['mon', 'tue', 'wed', 'thu', 'fri'];
+        }
+
+        return [
+            'enabled' => ($policy['enabled'] ?? false) === true,
+            'timezone' => (string) ($policy['timezone'] ?? $calendarSetting?->timezone ?? 'UTC'),
+            'start_time' => (string) ($policy['start_time'] ?? '09:00'),
+            'end_time' => (string) ($policy['end_time'] ?? '17:00'),
+            'days' => array_values(array_unique(array_filter(array_map(
+                static fn ($value): string => is_string($value) ? strtolower(trim($value)) : '',
+                $days
+            )))),
         ];
     }
 }

@@ -1,17 +1,53 @@
 import React from 'react'
 import { Link, router, usePage } from '@inertiajs/react'
 import { Button } from '../components/ui/button'
-import { LayoutDashboard, MessagesSquare, Database, QrCode, LogOut } from 'lucide-react'
+import { LayoutDashboard, MessagesSquare, Database, QrCode, LogOut, Link2, Clock3 } from 'lucide-react'
 
 export default function TenantLayout({ title, children }) {
   const { url, props } = usePage()
   const role = props?.auth?.user?.role ?? 'tenant_admin'
+  const [pathname, search = ''] = String(url ?? '').split('?')
+  const query = new URLSearchParams(search)
+  const step = query.get('step')
+  const section = query.get('section')
 
   const menu = [
-    { href: '/tenant/dashboard', label: 'Beranda', match: '/tenant/dashboard', icon: LayoutDashboard },
-    { href: '/tenant/inbox', label: 'Kotak Masuk Percakapan', match: '/tenant/inbox', icon: MessagesSquare },
-    { href: '/tenant/business-data', label: 'Data Bisnis', match: '/tenant/business-data', icon: Database },
-    { href: '/tenant/whatsapp/qr', label: 'Pindai QR WhatsApp', match: '/tenant/whatsapp/qr', icon: QrCode },
+    {
+      href: '/tenant/dashboard',
+      label: 'Beranda',
+      icon: LayoutDashboard,
+      isActive: () => pathname.startsWith('/tenant/dashboard'),
+    },
+    {
+      href: '/tenant/inbox',
+      label: 'Kotak Masuk Percakapan',
+      icon: MessagesSquare,
+      isActive: () => pathname.startsWith('/tenant/inbox'),
+    },
+    {
+      href: '/tenant/business-data',
+      label: 'Data Bisnis',
+      icon: Database,
+      isActive: () => pathname === '/tenant/business-data' && step !== 'settings',
+    },
+    {
+      href: '/tenant/business-data?step=settings&section=booking',
+      label: 'Booking Link',
+      icon: Link2,
+      isActive: () => pathname === '/tenant/business-data' && step === 'settings' && section !== 'hours',
+    },
+    {
+      href: '/tenant/business-data?step=settings&section=hours',
+      label: 'Jam Operasional',
+      icon: Clock3,
+      isActive: () => pathname === '/tenant/business-data' && step === 'settings' && section === 'hours',
+    },
+    {
+      href: '/tenant/whatsapp/qr',
+      label: 'Pindai QR WhatsApp',
+      icon: QrCode,
+      isActive: () => pathname.startsWith('/tenant/whatsapp/qr'),
+    },
   ]
 
   const activeClass = 'bg-emerald-600 text-white shadow-sm'
@@ -25,7 +61,7 @@ export default function TenantLayout({ title, children }) {
           <p className="mt-1 text-xs uppercase tracking-wide text-slate-500">Peran {role}</p>
           <nav className="mt-4 space-y-1 text-sm">
             {menu.map((item) => {
-              const isActive = url.startsWith(item.match)
+              const isActive = item.isActive()
               const Icon = item.icon
               return (
                 <Link

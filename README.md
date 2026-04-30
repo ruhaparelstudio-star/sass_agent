@@ -73,6 +73,26 @@ For one-off execution:
 docker compose exec -T app env XDG_CONFIG_HOME=/tmp php artisan tinker --execute="dump('OK');"
 ```
 
+## Frontend Build In Container
+
+Use these shortcuts from project root:
+
+```bash
+make frontend-install
+make frontend-build
+make frontend-dev
+```
+
+All commands run inside `wa-gateway` container, so host Node/NPM mismatch will not block frontend build.
+
+If `make` is not installed, use scripts directly:
+
+```bash
+./scripts/frontend-install.sh
+./scripts/frontend-build.sh
+./scripts/frontend-dev.sh
+```
+
 
 
 #prompt/07-validation-safety

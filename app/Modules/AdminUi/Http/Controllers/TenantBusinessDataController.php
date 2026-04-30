@@ -256,6 +256,38 @@ class TenantBusinessDataController extends Controller
         return back()->with('success', 'FAQ status updated.');
     }
 
+    public function upsertBookingSetting(Request $request): RedirectResponse
+    {
+        $tenantId = $this->resolveAuthorizedTenantId($request);
+        $payload = $request->validate([
+            'booking_url' => ['required', 'url', 'max:2048'],
+            'is_active' => ['nullable', 'boolean'],
+            'active_from' => ['nullable', 'date'],
+            'active_until' => ['nullable', 'date'],
+        ]);
+
+        $this->commandService->upsertBookingSetting($tenantId, $payload);
+
+        return back()->with('success', 'Booking link updated.');
+    }
+
+    public function upsertBusinessHours(Request $request): RedirectResponse
+    {
+        $tenantId = $this->resolveAuthorizedTenantId($request);
+        $payload = $request->validate([
+            'enabled' => ['nullable', 'boolean'],
+            'timezone' => ['required', 'string', 'max:64'],
+            'start_time' => ['required', 'date_format:H:i'],
+            'end_time' => ['required', 'date_format:H:i'],
+            'days' => ['required', 'array', 'min:1'],
+            'days.*' => ['required', 'in:mon,tue,wed,thu,fri,sat,sun'],
+        ]);
+
+        $this->commandService->upsertBusinessHoursPolicy($tenantId, $payload);
+
+        return back()->with('success', 'Business hours updated.');
+    }
+
     private function serviceCatalogRules(int $tenantId, ?int $ignoreId = null, bool $requireCode = true): array
     {
         return [

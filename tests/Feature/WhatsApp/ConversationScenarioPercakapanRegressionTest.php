@@ -10,6 +10,7 @@ use App\Models\DecisionTrace;
 use App\Models\KnowledgeVersion;
 use App\Models\LeadProfile;
 use App\Models\Message;
+use App\Models\Invoice;
 use App\Models\Package;
 use App\Models\PackageAlias;
 use App\Models\PackageItem;
@@ -21,12 +22,16 @@ use App\Models\WaAccount;
 use App\Models\WaInboundMessage;
 use App\Models\WaOutboundMessage;
 use App\Models\WaSession;
+use App\Models\Handoff;
+use App\Models\ConversationSummary;
 use App\Modules\AiLayer\Contracts\LlmClientContract;
 use App\Modules\AiLayer\DTO\LlmResponse;
+use App\Modules\Action\Services\ActionDispatcherService;
 use App\Modules\Calendar\Services\CalendarAvailabilityService;
 use App\Modules\Plans\Services\FeatureGateService;
 use App\Modules\WhatsApp\Services\WaInboundTurnOrchestratorService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
@@ -456,17 +461,629 @@ class ConversationScenarioPercakapanRegressionTest extends TestCase
         $this->assertFalse($outboundWithBookingUrl, 'Booking URL must not be outbounded when booking dispatch is blocked.');
     }
 
+    public function test_lead_limit_exhausted_blocks_pricelist_dispatch_and_triggers_handoff(): void
+    {
+        Queue::fake();
+        $this->bindFeatureGate(leadLimit: 1, automationEnabled: true, calendarAccess: true);
+        $this->bindCalendarAsAvailable();
+        $this->bindLlmJsonSequence([
+            '{"intent":"ask_pricelist","confidence":0.95,"entities":{"customer_name":"Aris Egi","event_type":"wedding","package_query":"photo graper wedding"}}',
+        ]);
+
+        $tenant = Tenant::query()->create([
+            'name' => 'Studio Wedding',
+            'slug' => 'studio-wedding-lead-limit',
+            'is_active' => true,
+        ]);
+
+        LeadProfile::query()->create([
+            'tenant_id' => $tenant->id,
+            'customer_phone' => '628777777777',
+            'full_name' => 'Existing Lead',
+            'created_at' => now()->subMinute(),
+            'updated_at' => now()->subMinute(),
+        ]);
+
+        $account = WaAccount::query()->create([
+            'tenant_id' => $tenant->id,
+            'provider' => 'meta',
+            'provider_ref' => 'acct-lead-limit',
+            'phone' => '+628111111111',
+            'status' => 'connected',
+            'last_payload' => ['event' => 'connected'],
+        ]);
+
+        $session = WaSession::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'provider' => 'meta',
+            'provider_ref' => 'sess-lead-limit',
+            'status' => 'active',
+            'last_payload' => ['event' => 'active'],
+        ]);
+
+        $this->seedKnowledgeAndAssets($tenant);
+
+        $inbound = WaInboundMessage::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'wa_session_id' => $session->id,
+            'provider' => 'meta',
+            'provider_message_id' => 'lead-limit-turn-1',
+            'from' => '+628111111111',
+            'to' => '+628222222222',
+            'message_type' => 'text',
+            'message_timestamp' => now(),
+            'payload' => [
+                'message' => [
+                    'conversation' => 'boleh minta pricelist wedding untuk aris egi?',
+                ],
+            ],
+            'meta' => [
+                'scenario' => 'lead_limit_exhausted',
+                'turn' => 1,
+            ],
+        ]);
+
+        app(WaInboundTurnOrchestratorService::class)->process($tenant, $inbound);
+
+        $conversation = Conversation::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('customer_phone', '628111111111')
+            ->latest('id')
+            ->firstOrFail();
+
+        $sendFileLog = ActionLog::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->where('action', 'send_file')
+            ->latest('id')
+            ->firstOrFail();
+
+        $this->assertSame('blocked', $sendFileLog->status);
+        $this->assertSame('policy_tenant_blocked', $sendFileLog->reason);
+
+        $trace = DecisionTrace::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->where('trace_key', 'inbound_turn')
+            ->latest('id')
+            ->firstOrFail();
+
+        $decision = (array) ($trace->decision_json ?? []);
+        $blockedActions = (array) ($decision['blocked_actions'] ?? []);
+        $reply = mb_strtolower((string) ($trace->final_reply ?? ''));
+        $leadLimitMeta = (array) ($trace->meta['lead_limit'] ?? []);
+
+        $this->assertSame('ask_pricelist', $decision['intent'] ?? null);
+        $this->assertTrue(($decision['handoff_required'] ?? false) === true);
+        $this->assertSame('lead_limit_exhausted', $decision['handoff_reason_code'] ?? null);
+        $this->assertSame('send_file', $blockedActions[0]['action'] ?? null);
+        $this->assertSame('policy_tenant_blocked', $blockedActions[0]['reason'] ?? null);
+        $this->assertTrue(($leadLimitMeta['limit_exhausted_for_new_lead'] ?? false) === true);
+        $this->assertStringNotContainsString('pricelist terbaru kami', $reply);
+        $this->assertStringNotContainsString('sudah saya kirim', $reply);
+
+        $fileOutboundExists = WaOutboundMessage::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('message_type', 'file')
+            ->exists();
+        $this->assertFalse($fileOutboundExists, 'No file outbound should be queued when lead limit policy blocks send_file.');
+
+        $handoffLog = ActionLog::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->where('action', 'handoff_to_human')
+            ->latest('id')
+            ->firstOrFail();
+        $this->assertSame('executed', $handoffLog->status);
+    }
+
+    public function test_calendar_unavailable_blocks_booking_link_and_triggers_handoff_without_false_send_claim(): void
+    {
+        Queue::fake();
+        $this->bindFeatureGate(leadLimit: 0, automationEnabled: true, calendarAccess: true);
+        $this->bindCalendarAsUnavailable();
+        $this->bindLlmJsonSequence([
+            '{"intent":"booking_intent","confidence":0.96,"entities":{"package_query":"photo dan video","event_date":"2026-07-20"}}',
+        ]);
+
+        $tenant = Tenant::query()->create([
+            'name' => 'Studio Wedding',
+            'slug' => 'studio-wedding-calendar-unavailable',
+            'is_active' => true,
+        ]);
+
+        $account = WaAccount::query()->create([
+            'tenant_id' => $tenant->id,
+            'provider' => 'meta',
+            'provider_ref' => 'acct-cal-unavailable',
+            'phone' => '+628111111111',
+            'status' => 'connected',
+            'last_payload' => ['event' => 'connected'],
+        ]);
+
+        $session = WaSession::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'provider' => 'meta',
+            'provider_ref' => 'sess-cal-unavailable',
+            'status' => 'active',
+            'last_payload' => ['event' => 'active'],
+        ]);
+
+        $this->seedKnowledgeAndAssets($tenant);
+        LeadProfile::query()->create([
+            'tenant_id' => $tenant->id,
+            'customer_phone' => '628111111111',
+            'full_name' => 'Aris Egi',
+        ]);
+
+        $inbound = WaInboundMessage::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'wa_session_id' => $session->id,
+            'provider' => 'meta',
+            'provider_message_id' => 'calendar-unavailable-booking',
+            'from' => '+628111111111',
+            'to' => '+628222222222',
+            'message_type' => 'text',
+            'message_timestamp' => now(),
+            'payload' => [
+                'message' => [
+                    'conversation' => 'saya mau booking paket photo dan video tanggal 2026-07-20',
+                ],
+            ],
+            'meta' => [
+                'scenario' => 'calendar_unavailable_booking',
+                'turn' => 1,
+            ],
+        ]);
+
+        app(WaInboundTurnOrchestratorService::class)->process($tenant, $inbound);
+
+        $conversation = Conversation::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('customer_phone', '628111111111')
+            ->latest('id')
+            ->firstOrFail();
+
+        $sendBookingLog = ActionLog::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->where('action', 'send_booking_link')
+            ->latest('id')
+            ->firstOrFail();
+        $this->assertSame('blocked', $sendBookingLog->status);
+        $this->assertSame('grounding_calendar_missing_source', $sendBookingLog->reason);
+
+        $trace = DecisionTrace::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->where('trace_key', 'inbound_turn')
+            ->latest('id')
+            ->firstOrFail();
+
+        $decision = (array) ($trace->decision_json ?? []);
+        $reply = mb_strtolower((string) ($trace->final_reply ?? ''));
+        $this->assertSame('booking_intent', $decision['intent'] ?? null);
+        $this->assertTrue(($decision['handoff_required'] ?? false) === true);
+        $this->assertSame('calendar_unavailable', $decision['handoff_reason_code'] ?? null);
+        $this->assertStringNotContainsString('link booking sudah saya kirim', $reply);
+        $this->assertStringNotContainsString('sudah saya kirim', $reply);
+
+        $bookingUrlOutbounded = WaOutboundMessage::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('message_type', 'text')
+            ->get()
+            ->contains(fn (WaOutboundMessage $outbound): bool => str_contains((string) ($outbound->payload['text'] ?? ''), 'https://booking.example.com/wedding'));
+        $this->assertFalse($bookingUrlOutbounded, 'Booking URL must not be outbounded when calendar grounding is unavailable.');
+
+        $handoff = Handoff::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->latest('id')
+            ->firstOrFail();
+        $this->assertSame('calendar_unavailable', $handoff->reason_code);
+    }
+
+    public function test_paused_mode_inbound_does_not_send_auto_reply_and_creates_handoff_trace(): void
+    {
+        Queue::fake();
+        $this->bindFeatureGateAlwaysOn();
+        $this->bindCalendarAsAvailable();
+        $this->bindLlmJsonSequence([
+            '{"intent":"unknown","confidence":0.10,"entities":{}}',
+        ]);
+
+        $tenant = Tenant::query()->create([
+            'name' => 'Studio Wedding',
+            'slug' => 'studio-wedding-paused-mode',
+            'is_active' => true,
+        ]);
+
+        $account = WaAccount::query()->create([
+            'tenant_id' => $tenant->id,
+            'provider' => 'meta',
+            'provider_ref' => 'acct-paused-mode',
+            'phone' => '+628111111111',
+            'status' => 'connected',
+            'last_payload' => ['event' => 'connected'],
+        ]);
+
+        $session = WaSession::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'provider' => 'meta',
+            'provider_ref' => 'sess-paused-mode',
+            'status' => 'active',
+            'last_payload' => ['event' => 'active'],
+        ]);
+
+        $conversation = Conversation::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'customer_phone' => '628111111111',
+            'status' => 'open',
+            'current_stage' => 'qualification',
+            'active_goal' => 'pricing',
+            'agent_mode' => 'paused',
+            'memory_mode' => 'short',
+        ]);
+
+        ConversationState::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'current_stage' => 'qualification',
+            'active_goal' => 'pricing',
+            'agent_mode' => 'paused',
+            'memory_mode' => 'short',
+            'retention_policy' => 'standard',
+        ]);
+
+        $inbound = WaInboundMessage::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'wa_session_id' => $session->id,
+            'provider' => 'meta',
+            'provider_message_id' => 'paused-mode-turn-1',
+            'from' => '+628111111111',
+            'to' => '+628222222222',
+            'message_type' => 'text',
+            'message_timestamp' => now(),
+            'payload' => [
+                'message' => [
+                    'conversation' => 'halo apakah ada admin?',
+                ],
+            ],
+            'meta' => [
+                'scenario' => 'paused_mode_inbound',
+                'turn' => 1,
+            ],
+        ]);
+
+        app(WaInboundTurnOrchestratorService::class)->process($tenant, $inbound);
+
+        $this->assertDatabaseMissing('messages', [
+            'tenant_id' => $tenant->id,
+            'direction' => 'outbound',
+        ]);
+
+        $trace = DecisionTrace::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->where('trace_key', 'inbound_turn')
+            ->latest('id')
+            ->firstOrFail();
+        $this->assertSame('skipped_mode_no_auto_reply', $trace->meta['reply_dispatch']['reason'] ?? null);
+
+        $handoff = Handoff::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->latest('id')
+            ->firstOrFail();
+        $this->assertSame('mode_paused', $handoff->reason_code);
+    }
+
+    public function test_invoice_send_transitions_to_limited_dormant_and_dormant_trigger_loads_summary_while_sensitive_action_stays_blocked(): void
+    {
+        Queue::fake();
+        $this->bindFeatureGateAlwaysOn();
+        $this->bindCalendarAsAvailable();
+        $this->bindLlmJsonSequence([
+            '{"intent":"ask_pricelist","confidence":0.95,"entities":{"customer_name":"Aris Egi","event_type":"wedding","package_query":"photo graper wedding"}}',
+        ]);
+
+        $tenant = Tenant::query()->create([
+            'name' => 'Studio Wedding',
+            'slug' => 'studio-wedding-invoice-limited',
+            'is_active' => true,
+        ]);
+
+        $account = WaAccount::query()->create([
+            'tenant_id' => $tenant->id,
+            'provider' => 'meta',
+            'provider_ref' => 'acct-invoice-limited',
+            'phone' => '+628111111111',
+            'status' => 'connected',
+            'last_payload' => ['event' => 'connected'],
+        ]);
+
+        $session = WaSession::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'provider' => 'meta',
+            'provider_ref' => 'sess-invoice-limited',
+            'status' => 'active',
+            'last_payload' => ['event' => 'active'],
+        ]);
+
+        $this->seedKnowledgeAndAssets($tenant);
+
+        $conversation = Conversation::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'customer_phone' => '628111111111',
+            'status' => 'open',
+            'current_stage' => 'invoice_phase',
+            'active_goal' => 'invoice_followup',
+            'agent_mode' => 'assistant',
+            'memory_mode' => 'short',
+        ]);
+
+        ConversationState::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'current_stage' => 'invoice_phase',
+            'active_goal' => 'invoice_followup',
+            'agent_mode' => 'assistant',
+            'memory_mode' => 'short',
+            'retention_policy' => 'standard',
+        ]);
+
+        $invoiceAsset = TenantAsset::query()->create([
+            'tenant_id' => $tenant->id,
+            'asset_type' => 'invoice',
+            'display_name' => 'Invoice April',
+            'original_filename' => 'invoice-april.pdf',
+            'storage_disk' => 'local',
+            'storage_path' => 'tenant-assets/invoice/invoice-april.pdf',
+            'uploaded_by_user_id' => null,
+            'sort_order' => 1,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+
+        $invoice = Invoice::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'tenant_asset_id' => $invoiceAsset->id,
+            'customer_phone' => '628111111111',
+            'status' => 'ready',
+            'issued_at' => now()->subMinute(),
+        ]);
+
+        $dispatch = app(ActionDispatcherService::class)->dispatch($tenant, $conversation, [
+            'action' => 'send_invoice',
+            'reasons' => [],
+            'meta' => [
+                'send_invoice' => [
+                    'provider' => 'meta',
+                    'wa_account_provider_ref' => $account->provider_ref,
+                    'wa_session_provider_ref' => $session->provider_ref,
+                    'provider_message_id' => null,
+                    'to' => '+628111111111',
+                    'invoice_id' => $invoice->id,
+                    'tenant_asset_id' => $invoiceAsset->id,
+                    'file_name' => 'invoice-april.pdf',
+                    'mime_type' => 'application/pdf',
+                    'caption' => 'Invoice April',
+                    'meta' => ['source' => 'feature_test'],
+                ],
+            ],
+        ]);
+
+        $this->assertSame('executed', $dispatch['status']);
+
+        $stateAfterInvoice = ConversationState::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->firstOrFail();
+        $this->assertSame('limited', $stateAfterInvoice->agent_mode);
+        $this->assertSame('dormant', $stateAfterInvoice->memory_mode);
+
+        ConversationSummary::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'message_count' => 14,
+            'summary' => 'Ringkasan percakapan sebelumnya: lead minta pricelist wedding dan diskusi invoice.',
+            'retention_until' => now()->addDays(5),
+            'summarized_at' => now(),
+        ]);
+
+        $inbound = WaInboundMessage::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'wa_session_id' => $session->id,
+            'provider' => 'meta',
+            'provider_message_id' => 'limited-dormant-turn-1',
+            'from' => '+628111111111',
+            'to' => '+628222222222',
+            'message_type' => 'text',
+            'message_timestamp' => now(),
+            'payload' => [
+                'message' => [
+                    'conversation' => 'lanjut pembahasan invoice sebelumnya, kirim lagi pricelistnya',
+                ],
+            ],
+            'meta' => [
+                'scenario' => 'invoice_limited_dormant',
+                'turn' => 1,
+            ],
+        ]);
+
+        app(WaInboundTurnOrchestratorService::class)->process($tenant, $inbound);
+
+        $trace = DecisionTrace::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->where('trace_key', 'inbound_turn')
+            ->latest('id')
+            ->firstOrFail();
+
+        $decision = (array) ($trace->decision_json ?? []);
+        $dormantTrace = (array) ($decision['trace']['dormant_retrieval'] ?? []);
+        $reply = mb_strtolower((string) ($trace->final_reply ?? ''));
+
+        $this->assertSame('loaded', $dormantTrace['status'] ?? null);
+        $this->assertSame('ask_pricelist', $decision['intent'] ?? null);
+        $this->assertStringNotContainsString('pricelist terbaru kami', $reply);
+        $this->assertStringNotContainsString('sudah saya kirim', $reply);
+
+        $sendFileLog = ActionLog::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->where('action', 'send_file')
+            ->latest('id')
+            ->firstOrFail();
+        $this->assertSame('blocked', $sendFileLog->status);
+        $this->assertSame('mode_limited_blocked_action', $sendFileLog->reason);
+
+        $fileOutboundExists = WaOutboundMessage::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('message_type', 'file')
+            ->get()
+            ->contains(fn (WaOutboundMessage $outbound): bool => ((string) ($outbound->payload['file']['filename'] ?? '')) === 'file_pricelist_wedding.pdf');
+        $this->assertFalse($fileOutboundExists, 'Pricelist file must not be outbounded when mode is limited.');
+    }
+
+    public function test_business_hours_policy_blocks_sensitive_action_and_does_not_claim_file_sent(): void
+    {
+        Queue::fake();
+        Config::set('agent.business_hours', [
+            'enabled' => true,
+            'timezone' => 'UTC',
+            'start_time' => '09:00',
+            'end_time' => '17:00',
+            'days' => ['sun'],
+        ]);
+
+        $this->bindFeatureGateAlwaysOn();
+        $this->bindCalendarAsAvailable();
+        $this->bindLlmJsonSequence([
+            '{"intent":"ask_pricelist","confidence":0.95,"entities":{"customer_name":"Aris Egi","event_type":"wedding","package_query":"photo graper wedding"}}',
+        ]);
+
+        $tenant = Tenant::query()->create([
+            'name' => 'Studio Wedding',
+            'slug' => 'studio-wedding-business-hours',
+            'is_active' => true,
+        ]);
+
+        $account = WaAccount::query()->create([
+            'tenant_id' => $tenant->id,
+            'provider' => 'meta',
+            'provider_ref' => 'acct-business-hours',
+            'phone' => '+628111111111',
+            'status' => 'connected',
+            'last_payload' => ['event' => 'connected'],
+        ]);
+
+        $session = WaSession::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'provider' => 'meta',
+            'provider_ref' => 'sess-business-hours',
+            'status' => 'active',
+            'last_payload' => ['event' => 'active'],
+        ]);
+
+        $this->seedKnowledgeAndAssets($tenant);
+
+        $inbound = WaInboundMessage::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'wa_session_id' => $session->id,
+            'provider' => 'meta',
+            'provider_message_id' => 'business-hours-turn-1',
+            'from' => '+628111111111',
+            'to' => '+628222222222',
+            'message_type' => 'text',
+            'message_timestamp' => now(),
+            'payload' => [
+                'message' => [
+                    'conversation' => 'minta pricelist wedding ya, nama saya aris egi',
+                ],
+            ],
+            'meta' => [
+                'scenario' => 'business_hours_block',
+                'turn' => 1,
+            ],
+        ]);
+
+        app(WaInboundTurnOrchestratorService::class)->process($tenant, $inbound);
+
+        $conversation = Conversation::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('customer_phone', '628111111111')
+            ->latest('id')
+            ->firstOrFail();
+
+        $sendFileLog = ActionLog::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->where('action', 'send_file')
+            ->latest('id')
+            ->firstOrFail();
+        $this->assertSame('blocked', $sendFileLog->status);
+        $this->assertSame('policy_business_hours_blocked', $sendFileLog->reason);
+
+        $trace = DecisionTrace::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->where('trace_key', 'inbound_turn')
+            ->latest('id')
+            ->firstOrFail();
+        $decision = (array) ($trace->decision_json ?? []);
+        $reply = mb_strtolower((string) ($trace->final_reply ?? ''));
+
+        $this->assertTrue(($decision['handoff_required'] ?? false) === true);
+        $this->assertSame('policy_blocked', $decision['handoff_reason_code'] ?? null);
+        $this->assertStringNotContainsString('pricelist terbaru kami', $reply);
+        $this->assertStringNotContainsString('sudah saya kirim', $reply);
+
+        $fileOutboundExists = WaOutboundMessage::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('message_type', 'file')
+            ->exists();
+        $this->assertFalse($fileOutboundExists, 'No file outbound should be queued outside business hours.');
+
+        Config::set('agent.business_hours', null);
+    }
+
     private function bindFeatureGateAlwaysOn(): void
     {
-        $this->app->bind(FeatureGateService::class, fn () => new class extends FeatureGateService
+        $this->bindFeatureGate(leadLimit: 0, automationEnabled: true, calendarAccess: true);
+    }
+
+    private function bindFeatureGate(int $leadLimit, bool $automationEnabled, bool $calendarAccess): void
+    {
+        $this->app->bind(FeatureGateService::class, fn () => new class($leadLimit, $automationEnabled, $calendarAccess) extends FeatureGateService
         {
+            public function __construct(
+                private readonly int $leadLimit,
+                private readonly bool $automationEnabled,
+                private readonly bool $calendarAccess,
+            ) {}
+
             public function resolveForTenant(?int $tenantId): array
             {
                 return [
                     'wa_agent_limit' => 1,
-                    'lead_limit' => 0,
-                    'calendar_access' => true,
-                    'automation_enabled' => true,
+                    'lead_limit' => $this->leadLimit,
+                    'calendar_access' => $this->calendarAccess,
+                    'automation_enabled' => $this->automationEnabled,
                 ];
             }
         });
@@ -485,6 +1102,25 @@ class ConversationScenarioPercakapanRegressionTest extends TestCase
                     'checked' => true,
                     'available' => true,
                     'reason' => null,
+                    'source' => 'test_stub',
+                ];
+            }
+        });
+    }
+
+    private function bindCalendarAsUnavailable(): void
+    {
+        $this->app->bind(CalendarAvailabilityService::class, fn () => new class extends CalendarAvailabilityService
+        {
+            public function __construct() {}
+
+            public function check(Tenant $tenant, array $request): array
+            {
+                return [
+                    'status' => 'blocked',
+                    'checked' => true,
+                    'available' => false,
+                    'reason' => 'calendar_unavailable',
                     'source' => 'test_stub',
                 ];
             }

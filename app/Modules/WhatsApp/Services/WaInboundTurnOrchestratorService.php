@@ -6,7 +6,9 @@ use App\Enums\MessageDirection;
 use App\Models\Conversation;
 use App\Models\ConversationContext;
 use App\Models\ConversationState;
+use App\Models\CalendarSetting;
 use App\Models\DecisionTrace;
+use App\Models\LeadProfile;
 use App\Models\Tenant;
 use App\Models\WaInboundMessage;
 use App\Modules\Action\Services\ActionDispatcherService;
@@ -17,6 +19,7 @@ use App\Modules\DataKnowledge\Services\CatalogResolver;
 use App\Modules\DataKnowledge\Services\PricelistAssetResolver;
 use App\Modules\Plans\Services\FeatureGateService;
 use App\Modules\Plans\Services\MonthlyUniqueLeadLimitService;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 
 class WaInboundTurnOrchestratorService
@@ -98,6 +101,10 @@ TEXT;
 
         DB::transaction(function () use ($tenant, $inboundMessage, $text, $customerPhone): void {
             $executedSteps = ['receive_inbound', 'deduplicate', 'load_tenant_and_wa_account'];
+            $hadLeadBeforeTurn = LeadProfile::query()
+                ->where('tenant_id', $tenant->id)
+                ->where('customer_phone', $customerPhone)
+                ->exists();
 
             $executedSteps[] = 'check_tenant_status_and_plan';
             $conversation = $this->conversationService->findOrCreateActiveConversation($tenant, $customerPhone);
@@ -115,7 +122,7 @@ TEXT;
             ], 'text', $inboundMessage->payload ?? null);
 
             $features = $this->featureGateService->resolveForTenant($tenant->id);
-            $context = $this->buildContext($tenant, $conversation, $state, $features, $inboundMessage, $text, $customerPhone);
+            $context = $this->buildContext($tenant, $conversation, $state, $features, $inboundMessage, $text, $customerPhone, $hadLeadBeforeTurn);
             $executedSteps[] = 'retrieve_knowledge';
             $pipeline = $this->turnPipelineService->handle(
                 $tenant,
@@ -418,15 +425,26 @@ TEXT;
         array $features,
         WaInboundMessage $inboundMessage,
         string $userMessage,
-        string $customerPhone
+        string $customerPhone,
+        bool $hadLeadBeforeTurn = false
     ): array {
         $policy = [];
         if ($tenant->is_active !== true || ($features['automation_enabled'] ?? false) !== true) {
             $policy['tenant']['blocked_actions'] = ['send_file', 'send_booking_link', 'send_invoice'];
         }
+        $businessHoursPolicy = $this->resolveBusinessHoursPolicy($tenant);
+        if ($businessHoursPolicy !== null) {
+            $policy['business_hours'] = $businessHoursPolicy;
+        }
 
         $leadLimit = (int) ($features['lead_limit'] ?? 0);
         $leadLimitEvaluation = $this->monthlyUniqueLeadLimitService->evaluate($tenant->id, $customerPhone, $leadLimit);
+        if (! $hadLeadBeforeTurn) {
+            $adjustedUniqueLeadCount = max(0, (int) ($leadLimitEvaluation['unique_lead_count'] ?? 0) - 1);
+            $leadLimitEvaluation['is_new_unique_lead'] = true;
+            $leadLimitEvaluation['unique_lead_count'] = $adjustedUniqueLeadCount;
+            $leadLimitEvaluation['limit_exhausted_for_new_lead'] = $leadLimit > 0 && $adjustedUniqueLeadCount >= $leadLimit;
+        }
         if (($leadLimitEvaluation['limit_exhausted_for_new_lead'] ?? false) === true) {
             $policy['tenant']['blocked_actions'] = array_values(array_unique(array_merge(
                 $policy['tenant']['blocked_actions'] ?? [],
@@ -476,6 +494,7 @@ TEXT;
             'calendar_check' => $calendarCheck,
             'availability_checked' => $calendarCheck['checked'] === true,
             'lead_limit' => $leadLimitEvaluation,
+            'dormant_retrieval' => $this->shouldTriggerDormantRetrieval($state, $userMessage),
             'previous_blocked_action' => $previousBlockedAction,
             'entities' => $this->buildPersistedEntityContext($state),
             'package_detail_lookup' => $packageDetailLookup,
@@ -487,6 +506,117 @@ TEXT;
                 'to' => $inboundMessage->from,
             ],
         ];
+    }
+
+    /**
+     * @return array{enabled:bool,in_hours:bool,timezone:string,start_time:string,end_time:string,days:array<int,string>}|null
+     */
+    private function resolveBusinessHoursPolicy(Tenant $tenant): ?array
+    {
+        $calendarSetting = CalendarSetting::query()
+            ->where('tenant_id', $tenant->id)
+            ->first();
+
+        $rules = is_array($calendarSetting?->rules) ? $calendarSetting->rules : [];
+        $policy = is_array($rules['business_hours'] ?? null) ? $rules['business_hours'] : null;
+
+        if ($policy === null) {
+            $fallback = config('agent.business_hours');
+            if (! is_array($fallback)) {
+                return null;
+            }
+
+            $policy = $fallback;
+        }
+
+        $enabled = ($policy['enabled'] ?? false) === true;
+        $timezone = is_string($policy['timezone'] ?? null) && trim((string) $policy['timezone']) !== ''
+            ? trim((string) $policy['timezone'])
+            : (is_string($calendarSetting?->timezone ?? null) && trim((string) $calendarSetting?->timezone) !== ''
+                ? trim((string) $calendarSetting?->timezone)
+                : 'UTC');
+        $startTime = is_string($policy['start_time'] ?? null) ? trim((string) $policy['start_time']) : '09:00';
+        $endTime = is_string($policy['end_time'] ?? null) ? trim((string) $policy['end_time']) : '17:00';
+        $days = is_array($policy['days'] ?? null) ? $policy['days'] : ['mon', 'tue', 'wed', 'thu', 'fri'];
+
+        $normalizedDays = array_values(array_unique(array_filter(array_map(
+            static fn ($value): string => is_string($value) ? strtolower(trim($value)) : '',
+            $days
+        ))));
+        if ($normalizedDays === []) {
+            $normalizedDays = ['mon', 'tue', 'wed', 'thu', 'fri'];
+        }
+
+        $inHours = true;
+        if ($enabled) {
+            $now = CarbonImmutable::now($timezone);
+            $dayKey = strtolower($now->englishDayOfWeek);
+            $dayMap = [
+                'monday' => 'mon',
+                'tuesday' => 'tue',
+                'wednesday' => 'wed',
+                'thursday' => 'thu',
+                'friday' => 'fri',
+                'saturday' => 'sat',
+                'sunday' => 'sun',
+            ];
+            $today = $dayMap[$dayKey] ?? null;
+
+            $inConfiguredDay = $today !== null && in_array($today, $normalizedDays, true);
+            $startMinutes = $this->minutesFromTime($startTime);
+            $endMinutes = $this->minutesFromTime($endTime);
+            $nowMinutes = ((int) $now->format('H')) * 60 + (int) $now->format('i');
+
+            if (! $inConfiguredDay || $startMinutes === null || $endMinutes === null) {
+                $inHours = false;
+            } elseif ($startMinutes <= $endMinutes) {
+                $inHours = $nowMinutes >= $startMinutes && $nowMinutes <= $endMinutes;
+            } else {
+                $inHours = $nowMinutes >= $startMinutes || $nowMinutes <= $endMinutes;
+            }
+        }
+
+        return [
+            'enabled' => $enabled,
+            'in_hours' => $inHours,
+            'timezone' => $timezone,
+            'start_time' => $startTime,
+            'end_time' => $endTime,
+            'days' => $normalizedDays,
+        ];
+    }
+
+    private function minutesFromTime(string $time): ?int
+    {
+        if (preg_match('/^([01]\d|2[0-3]):([0-5]\d)$/', $time, $matches) !== 1) {
+            return null;
+        }
+
+        return ((int) $matches[1]) * 60 + (int) $matches[2];
+    }
+
+    private function shouldTriggerDormantRetrieval(ConversationState $state, string $userMessage): bool
+    {
+        if (strtolower(trim((string) $state->memory_mode)) !== 'dormant') {
+            return false;
+        }
+
+        $patterns = [
+            '/\b(chat|obrolan|pembahasan)\s+(sebelumnya|kemarin)\b/i',
+            '/\b(lanjut|lanjutin|continue)\b/i',
+            '/\b(invoice|pembayaran|bayar)\b/i',
+            '/\b(komplain|complaint)\b/i',
+            '/\b(booking)\s+(sebelumnya)\b/i',
+            '/\b(admin)\b/i',
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $userMessage) === 1) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

@@ -1016,6 +1016,50 @@ class TurnPipelineService
                 ];
             }
 
+            $calendarCheck = $context['calendar_check'] ?? null;
+            if (is_array($calendarCheck)
+                && (($calendarCheck['checked'] ?? false) === true)
+                && (($calendarCheck['available'] ?? false) === false)
+            ) {
+                return [
+                    'required' => true,
+                    'reason_code' => 'calendar_unavailable',
+                    'priority' => 'high',
+                ];
+            }
+
+            $blocked = $candidates['blocked'] ?? [];
+            $blockedReasons = is_array($blocked) && is_array($blocked[0]['reasons'] ?? null)
+                ? $blocked[0]['reasons']
+                : [];
+
+            if (in_array('grounding_calendar_missing_source', $blockedReasons, true)) {
+                return [
+                    'required' => true,
+                    'reason_code' => 'calendar_unavailable',
+                    'priority' => 'high',
+                ];
+            }
+
+            if (in_array('booking_link_not_available', $blockedReasons, true)) {
+                return [
+                    'required' => true,
+                    'reason_code' => 'booking_link_unavailable',
+                    'priority' => 'high',
+                ];
+            }
+
+            if (in_array('policy_tenant_blocked', $blockedReasons, true)
+                || in_array('policy_global_blocked', $blockedReasons, true)
+                || in_array('policy_business_hours_blocked', $blockedReasons, true)
+            ) {
+                return [
+                    'required' => true,
+                    'reason_code' => 'policy_blocked',
+                    'priority' => 'high',
+                ];
+            }
+
             return [
                 'required' => false,
                 'reason_code' => null,

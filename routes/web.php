@@ -94,6 +94,8 @@ Route::middleware('auth')->group(function (): void {
     Route::post('/tenant/business-data/faqs', [TenantBusinessDataController::class, 'storeFaq']);
     Route::put('/tenant/business-data/faqs/{faq}', [TenantBusinessDataController::class, 'updateFaq']);
     Route::post('/tenant/business-data/faqs/{faq}/toggle', [TenantBusinessDataController::class, 'toggleFaq']);
+    Route::post('/tenant/business-data/booking-setting', [TenantBusinessDataController::class, 'upsertBookingSetting']);
+    Route::post('/tenant/business-data/business-hours', [TenantBusinessDataController::class, 'upsertBusinessHours']);
     Route::post('/tenant/business-data/assets/pricelist', [TenantBusinessDataController::class, 'uploadPricelistAsset']);
     Route::post('/tenant/business-data/assets/invoice', [TenantBusinessDataController::class, 'uploadInvoiceAsset']);
 });

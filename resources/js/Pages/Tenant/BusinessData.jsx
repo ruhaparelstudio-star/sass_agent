@@ -7,7 +7,16 @@ import { Select } from '../../components/ui/select'
 import { Badge } from '../../components/ui/badge'
 import { ArrowRight, CheckCircle2, Lock, Save, Upload } from 'lucide-react'
 
-const STEP_ORDER = ['catalog', 'product', 'package', 'pricing', 'faq', 'assets']
+const STEP_ORDER = ['catalog', 'product', 'package', 'pricing', 'faq', 'assets', 'settings']
+const DAY_OPTIONS = [
+  { key: 'mon', label: 'Senin' },
+  { key: 'tue', label: 'Selasa' },
+  { key: 'wed', label: 'Rabu' },
+  { key: 'thu', label: 'Kamis' },
+  { key: 'fri', label: 'Jumat' },
+  { key: 'sat', label: 'Sabtu' },
+  { key: 'sun', label: 'Minggu' },
+]
 
 export default function BusinessData({ data, assets, discountTypes = ['percentage', 'fixed'] }) {
   const page = usePage()
@@ -28,6 +37,14 @@ export default function BusinessData({ data, assets, discountTypes = ['percentag
   const discounts = data?.discounts ?? []
   const faqs = data?.faqs ?? []
   const uploadedAssets = assets ?? []
+  const bookingSettings = data?.bookingSettings ?? []
+  const businessHoursPolicy = data?.businessHoursPolicy ?? {
+    enabled: false,
+    timezone: 'Asia/Jakarta',
+    start_time: '09:00',
+    end_time: '17:00',
+    days: ['mon', 'tue', 'wed', 'thu', 'fri'],
+  }
 
   const gate = {
     catalog: true,
@@ -36,6 +53,7 @@ export default function BusinessData({ data, assets, discountTypes = ['percentag
     pricing: packages.length > 0,
     faq: true,
     assets: true,
+    settings: true,
   }
 
   const progress = {
@@ -45,6 +63,7 @@ export default function BusinessData({ data, assets, discountTypes = ['percentag
     pricing: prices.length > 0 || discounts.length > 0,
     faq: faqs.length > 0,
     assets: uploadedAssets.length > 0,
+    settings: bookingSettings.length > 0 || businessHoursPolicy.enabled,
   }
 
   const stepMeta = {
@@ -53,7 +72,8 @@ export default function BusinessData({ data, assets, discountTypes = ['percentag
     package: { title: 'Langkah 3: Paket', description: 'Buat paket penawaran untuk kebutuhan harga dan diskon.', emptyHint: 'Produk harus tersedia sebelum membuat paket.', cta: 'Lanjut ke Harga & Diskon', next: 'pricing' },
     pricing: { title: 'Langkah 4: Harga & Diskon', description: 'Isi harga dan promo agar jawaban AI tetap grounded.', emptyHint: 'Buat minimal 1 harga atau diskon untuk paket aktif.', cta: 'Lanjut ke FAQ', next: 'faq' },
     faq: { title: 'Langkah 5: FAQ', description: 'Siapkan jawaban standar untuk pertanyaan berulang.', emptyHint: 'Tambahkan FAQ untuk memperkuat konsistensi jawaban AI.', cta: 'Lanjut ke Aset', next: 'assets' },
-    assets: { title: 'Langkah 6: Aset', description: 'Unggah dokumen pendukung agar flow siap end-to-end.', emptyHint: 'Unggah PDF daftar harga/invoice sebagai dokumen resmi tenant.', cta: null, next: null },
+    assets: { title: 'Langkah 6: Aset', description: 'Unggah dokumen pendukung agar flow siap end-to-end.', emptyHint: 'Unggah PDF daftar harga/invoice sebagai dokumen resmi tenant.', cta: 'Lanjut ke Pengaturan Operasional', next: 'settings' },
+    settings: { title: 'Langkah 7: Pengaturan Operasional', description: 'Atur booking link dan jam operasional agar kebijakan AI konsisten dengan SOP tenant.', emptyHint: 'Isi booking link aktif dan jam operasional bisnis.', cta: null, next: null },
   }
 
   const goToStep = (stepKey) => {
@@ -69,6 +89,19 @@ export default function BusinessData({ data, assets, discountTypes = ['percentag
   const faqForm = useForm({ question: '', answer: '', sort_order: '' })
   const pricelistForm = useForm({ display_name: '', file: null })
   const invoiceForm = useForm({ display_name: '', file: null })
+  const bookingForm = useForm({
+    booking_url: bookingSettings[0]?.booking_url ?? '',
+    is_active: bookingSettings[0]?.is_active ?? true,
+    active_from: bookingSettings[0]?.active_from ? String(bookingSettings[0].active_from).slice(0, 10) : '',
+    active_until: bookingSettings[0]?.active_until ? String(bookingSettings[0].active_until).slice(0, 10) : '',
+  })
+  const businessHoursForm = useForm({
+    enabled: businessHoursPolicy.enabled ?? false,
+    timezone: businessHoursPolicy.timezone ?? 'Asia/Jakarta',
+    start_time: businessHoursPolicy.start_time ?? '09:00',
+    end_time: businessHoursPolicy.end_time ?? '17:00',
+    days: Array.isArray(businessHoursPolicy.days) && businessHoursPolicy.days.length ? businessHoursPolicy.days : ['mon', 'tue', 'wed', 'thu', 'fri'],
+  })
 
   const resolvedStep = gate[currentStep] ? currentStep : STEP_ORDER.find((step) => gate[step]) ?? 'catalog'
 
@@ -80,6 +113,8 @@ export default function BusinessData({ data, assets, discountTypes = ['percentag
   const submitFaq = (event) => { event.preventDefault(); faqForm.post('/tenant/business-data/faqs', { preserveScroll: true, onSuccess: () => faqForm.reset() }) }
   const submitPricelist = (event) => { event.preventDefault(); pricelistForm.post('/tenant/business-data/assets/pricelist', { preserveScroll: true, forceFormData: true, onSuccess: () => pricelistForm.reset() }) }
   const submitInvoice = (event) => { event.preventDefault(); invoiceForm.post('/tenant/business-data/assets/invoice', { preserveScroll: true, forceFormData: true, onSuccess: () => invoiceForm.reset() }) }
+  const submitBookingSetting = (event) => { event.preventDefault(); bookingForm.post('/tenant/business-data/booking-setting', { preserveScroll: true }) }
+  const submitBusinessHours = (event) => { event.preventDefault(); businessHoursForm.post('/tenant/business-data/business-hours', { preserveScroll: true }) }
 
   const steps = STEP_ORDER.map((key, index) => ({ key, index: index + 1, label: stepMeta[key].title.replace(/^Langkah\s\d+:\s/, ''), unlocked: gate[key], done: progress[key], active: resolvedStep === key }))
   const activeStepMeta = stepMeta[resolvedStep]
@@ -95,6 +130,22 @@ export default function BusinessData({ data, assets, discountTypes = ['percentag
         {flash.success ? <div className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{flash.success}</div> : null}
         {flash.error ? <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{flash.error}</div> : null}
 
+        {resolvedStep !== 'settings' ? (
+          <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50/40 p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-base font-semibold text-emerald-900">Quick Config Operasional</h2>
+              <Button type="button" onClick={() => goToStep('settings')}>Buka Step Pengaturan</Button>
+            </div>
+            <SettingsStep
+              bookingForm={bookingForm}
+              businessHoursForm={businessHoursForm}
+              bookingRows={bookingSettings}
+              onSubmitBooking={submitBookingSetting}
+              onSubmitBusinessHours={submitBusinessHours}
+            />
+          </div>
+        ) : null}
+
         <StepCard title={activeStepMeta.title} description={activeStepMeta.description} isDone={progress[resolvedStep]} emptyHint={activeStepMeta.emptyHint} hasData={progress[resolvedStep]}>
           {resolvedStep === 'catalog' && <CatalogStep form={catalogForm} rows={catalogs} onSubmit={submitCatalog} />}
           {resolvedStep === 'product' && <ProductStep form={productForm} catalogs={catalogs} rows={products} onSubmit={submitProduct} disabled={!gate.product} />}
@@ -102,6 +153,7 @@ export default function BusinessData({ data, assets, discountTypes = ['percentag
           {resolvedStep === 'pricing' && <PricingStep priceForm={priceForm} discountForm={discountForm} packages={packages} prices={prices} discounts={discounts} discountTypes={discountTypes} onSubmitPrice={submitPrice} onSubmitDiscount={submitDiscount} disabled={!gate.pricing} />}
           {resolvedStep === 'faq' && <FaqStep form={faqForm} rows={faqs} onSubmit={submitFaq} />}
           {resolvedStep === 'assets' && <AssetsStep pricelistForm={pricelistForm} invoiceForm={invoiceForm} rows={uploadedAssets} onSubmitPricelist={submitPricelist} onSubmitInvoice={submitInvoice} />}
+          {resolvedStep === 'settings' && <SettingsStep bookingForm={bookingForm} businessHoursForm={businessHoursForm} bookingRows={bookingSettings} onSubmitBooking={submitBookingSetting} onSubmitBusinessHours={submitBusinessHours} />}
         </StepCard>
 
         {activeStepMeta.next && gate[activeStepMeta.next] && progress[resolvedStep] ? (
@@ -164,4 +216,103 @@ function FaqStep({ form, rows, onSubmit }) {
 
 function AssetsStep({ pricelistForm, invoiceForm, rows, onSubmitPricelist, onSubmitInvoice }) {
   return <div className="grid gap-4 lg:grid-cols-2"><div className="space-y-4"><form className="space-y-3 rounded-lg border border-slate-200 p-3" onSubmit={onSubmitPricelist}><h3 className="font-semibold">Unggah PDF Daftar Harga</h3><Field label="Nama Tampilan"><Input value={pricelistForm.data.display_name} onChange={(e) => pricelistForm.setData('display_name', e.target.value)} /><FieldError message={pricelistForm.errors.display_name} /></Field><Field label="Berkas PDF" required><Input type="file" accept="application/pdf" onChange={(e) => pricelistForm.setData('file', e.target.files?.[0] ?? null)} /><FieldError message={pricelistForm.errors.file} /></Field><Button type="submit" leftIcon={Upload} disabled={pricelistForm.processing}>Unggah Daftar Harga</Button></form><form className="space-y-3 rounded-lg border border-slate-200 p-3" onSubmit={onSubmitInvoice}><h3 className="font-semibold">Unggah PDF Invoice</h3><Field label="Nama Tampilan"><Input value={invoiceForm.data.display_name} onChange={(e) => invoiceForm.setData('display_name', e.target.value)} /><FieldError message={invoiceForm.errors.display_name} /></Field><Field label="Berkas PDF" required><Input type="file" accept="application/pdf" onChange={(e) => invoiceForm.setData('file', e.target.files?.[0] ?? null)} /><FieldError message={invoiceForm.errors.file} /></Field><Button type="submit" leftIcon={Upload} disabled={invoiceForm.processing}>Unggah Invoice</Button></form></div><InlineList title="Aset Terunggah" rows={rows} emptyText="Belum ada aset terunggah." render={(row) => `${row.asset_type}: ${row.display_name || row.original_filename}`} /></div>
+}
+
+function SettingsStep({ bookingForm, businessHoursForm, bookingRows, onSubmitBooking, onSubmitBusinessHours }) {
+  const toggleDay = (dayKey) => {
+    const days = Array.isArray(businessHoursForm.data.days) ? businessHoursForm.data.days : []
+    if (days.includes(dayKey)) {
+      businessHoursForm.setData('days', days.filter((value) => value !== dayKey))
+      return
+    }
+
+    businessHoursForm.setData('days', [...days, dayKey])
+  }
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <form className="space-y-3 rounded-lg border border-slate-200 p-3" onSubmit={onSubmitBooking}>
+        <h3 className="font-semibold">Booking Link</h3>
+        <Field label="Booking URL" required>
+          <Input
+            type="url"
+            placeholder="https://booking.example.com/wedding"
+            value={bookingForm.data.booking_url}
+            onChange={(e) => bookingForm.setData('booking_url', e.target.value)}
+          />
+          <FieldError message={bookingForm.errors.booking_url} />
+        </Field>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Aktif Dari">
+            <Input type="date" value={bookingForm.data.active_from} onChange={(e) => bookingForm.setData('active_from', e.target.value)} />
+            <FieldError message={bookingForm.errors.active_from} />
+          </Field>
+          <Field label="Aktif Sampai">
+            <Input type="date" value={bookingForm.data.active_until} onChange={(e) => bookingForm.setData('active_until', e.target.value)} />
+            <FieldError message={bookingForm.errors.active_until} />
+          </Field>
+        </div>
+        <label className="flex items-center gap-2 text-sm text-slate-700">
+          <input
+            type="checkbox"
+            checked={bookingForm.data.is_active === true}
+            onChange={(e) => bookingForm.setData('is_active', e.target.checked)}
+          />
+          Aktifkan booking link
+        </label>
+        <Button type="submit" leftIcon={Save} disabled={bookingForm.processing}>Simpan Booking Link</Button>
+      </form>
+
+      <div className="space-y-4">
+        <form className="space-y-3 rounded-lg border border-slate-200 p-3" onSubmit={onSubmitBusinessHours}>
+          <h3 className="font-semibold">Business Hours Policy</h3>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={businessHoursForm.data.enabled === true}
+              onChange={(e) => businessHoursForm.setData('enabled', e.target.checked)}
+            />
+            Aktifkan validasi jam operasional
+          </label>
+          <Field label="Timezone" required>
+            <Input value={businessHoursForm.data.timezone} onChange={(e) => businessHoursForm.setData('timezone', e.target.value)} />
+            <FieldError message={businessHoursForm.errors.timezone} />
+          </Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Jam Mulai" required>
+              <Input type="time" value={businessHoursForm.data.start_time} onChange={(e) => businessHoursForm.setData('start_time', e.target.value)} />
+              <FieldError message={businessHoursForm.errors.start_time} />
+            </Field>
+            <Field label="Jam Selesai" required>
+              <Input type="time" value={businessHoursForm.data.end_time} onChange={(e) => businessHoursForm.setData('end_time', e.target.value)} />
+              <FieldError message={businessHoursForm.errors.end_time} />
+            </Field>
+          </div>
+          <Field label="Hari Operasional" required>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {DAY_OPTIONS.map((day) => (
+                <label key={day.key} className="flex items-center gap-2 rounded border border-slate-200 px-2 py-1 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={(businessHoursForm.data.days ?? []).includes(day.key)}
+                    onChange={() => toggleDay(day.key)}
+                  />
+                  {day.label}
+                </label>
+              ))}
+            </div>
+            <FieldError message={businessHoursForm.errors.days} />
+          </Field>
+          <Button type="submit" leftIcon={Save} disabled={businessHoursForm.processing}>Simpan Business Hours</Button>
+        </form>
+
+        <InlineList
+          title="Booking Link Aktif"
+          rows={bookingRows}
+          emptyText="Belum ada booking link."
+          render={(row) => `${row.is_active ? '[Aktif]' : '[Nonaktif]'} ${row.booking_url}`}
+        />
+      </div>
+    </div>
+  )
 }

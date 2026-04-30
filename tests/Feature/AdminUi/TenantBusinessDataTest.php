@@ -8,6 +8,8 @@ use App\Models\Package;
 use App\Models\Price;
 use App\Models\Discount;
 use App\Models\Faq;
+use App\Models\BookingSetting;
+use App\Models\CalendarSetting;
 use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -42,6 +44,8 @@ class TenantBusinessDataTest extends TestCase
                 ->has('data.prices')
                 ->has('data.discounts')
                 ->has('data.faqs')
+                ->has('data.bookingSettings')
+                ->has('data.businessHoursPolicy')
                 ->has('assets')
             );
     }
@@ -112,6 +116,8 @@ class TenantBusinessDataTest extends TestCase
                 ->has('data.prices', 1)
                 ->has('data.discounts', 1)
                 ->has('data.faqs', 1)
+                ->has('data.bookingSettings')
+                ->has('data.businessHoursPolicy')
                 ->has('assets')
             );
     }
@@ -238,6 +244,81 @@ class TenantBusinessDataTest extends TestCase
             'product_id' => $product->id,
             'code' => 'PKG-0001',
             'name' => 'Gold Package',
+        ]);
+    }
+
+    public function test_tenant_admin_can_upsert_booking_setting(): void
+    {
+        [$tenant, $admin] = $this->createTenantAdmin('tenant-one');
+
+        $this->actingAs($admin)
+            ->post('/tenant/business-data/booking-setting', [
+                'booking_url' => 'https://booking.example.com/wedding',
+                'is_active' => true,
+                'active_from' => now()->toDateString(),
+            ])
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('booking_settings', [
+            'tenant_id' => $tenant->id,
+            'booking_url' => 'https://booking.example.com/wedding',
+            'is_active' => true,
+        ]);
+    }
+
+    public function test_tenant_admin_can_upsert_business_hours_policy(): void
+    {
+        [$tenant, $admin] = $this->createTenantAdmin('tenant-one');
+
+        $this->actingAs($admin)
+            ->post('/tenant/business-data/business-hours', [
+                'enabled' => true,
+                'timezone' => 'Asia/Jakarta',
+                'start_time' => '09:00',
+                'end_time' => '17:00',
+                'days' => ['mon', 'tue', 'wed', 'thu', 'fri'],
+            ])
+            ->assertRedirect();
+
+        $calendarSetting = CalendarSetting::query()->where('tenant_id', $tenant->id)->firstOrFail();
+        $rules = is_array($calendarSetting->rules) ? $calendarSetting->rules : [];
+        $businessHours = is_array($rules['business_hours'] ?? null) ? $rules['business_hours'] : [];
+
+        $this->assertSame('Asia/Jakarta', $calendarSetting->timezone);
+        $this->assertSame(true, $businessHours['enabled'] ?? false);
+        $this->assertSame('09:00', $businessHours['start_time'] ?? null);
+        $this->assertSame('17:00', $businessHours['end_time'] ?? null);
+        $this->assertSame(['mon', 'tue', 'wed', 'thu', 'fri'], $businessHours['days'] ?? []);
+    }
+
+    public function test_cross_tenant_booking_setting_update_is_scoped_by_context(): void
+    {
+        [$tenantOne, $adminOne] = $this->createTenantAdmin('tenant-one');
+        [$tenantTwo] = $this->createTenantAdmin('tenant-two');
+
+        BookingSetting::query()->create([
+            'tenant_id' => $tenantTwo->id,
+            'booking_url' => 'https://booking.example.com/tenant-two',
+            'sort_order' => 0,
+            'is_active' => true,
+            'active_from' => now()->subDay(),
+            'active_until' => now()->addDay(),
+        ]);
+
+        $this->actingAs($adminOne)
+            ->post('/tenant/business-data/booking-setting', [
+                'booking_url' => 'https://booking.example.com/tenant-one',
+                'is_active' => true,
+            ])
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('booking_settings', [
+            'tenant_id' => $tenantTwo->id,
+            'booking_url' => 'https://booking.example.com/tenant-two',
+        ]);
+        $this->assertDatabaseHas('booking_settings', [
+            'tenant_id' => $tenantOne->id,
+            'booking_url' => 'https://booking.example.com/tenant-one',
         ]);
     }
 

@@ -8,6 +8,8 @@ use App\Models\Package;
 use App\Models\Price;
 use App\Models\Product;
 use App\Models\ServiceCatalog;
+use App\Models\BookingSetting;
+use App\Models\CalendarSetting;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class TenantBusinessDataCommandService
@@ -136,6 +138,67 @@ class TenantBusinessDataCommandService
     {
         $this->assertTenantRecord($tenantId, (int) $faq->tenant_id);
         $faq->update(['is_active' => ! $faq->is_active]);
+    }
+
+    public function upsertBookingSetting(int $tenantId, array $payload): BookingSetting
+    {
+        $existing = BookingSetting::query()
+            ->where('tenant_id', $tenantId)
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->first();
+
+        if ($existing) {
+            $existing->update([
+                'booking_url' => $payload['booking_url'],
+                'is_active' => ($payload['is_active'] ?? true) === true,
+                'active_from' => $payload['active_from'] ?? null,
+                'active_until' => $payload['active_until'] ?? null,
+            ]);
+
+            return $existing->refresh();
+        }
+
+        return BookingSetting::query()->create([
+            'tenant_id' => $tenantId,
+            'booking_url' => $payload['booking_url'],
+            'sort_order' => 0,
+            'is_active' => ($payload['is_active'] ?? true) === true,
+            'active_from' => $payload['active_from'] ?? null,
+            'active_until' => $payload['active_until'] ?? null,
+        ]);
+    }
+
+    public function upsertBusinessHoursPolicy(int $tenantId, array $payload): CalendarSetting
+    {
+        $setting = CalendarSetting::query()->firstOrCreate(
+            ['tenant_id' => $tenantId],
+            [
+                'timezone' => (string) ($payload['timezone'] ?? 'UTC'),
+                'slot_minutes' => 60,
+                'is_active' => true,
+                'rules' => [],
+            ]
+        );
+
+        $rules = is_array($setting->rules) ? $setting->rules : [];
+        $rules['business_hours'] = [
+            'enabled' => ($payload['enabled'] ?? false) === true,
+            'timezone' => (string) ($payload['timezone'] ?? $setting->timezone ?? 'UTC'),
+            'start_time' => (string) ($payload['start_time'] ?? '09:00'),
+            'end_time' => (string) ($payload['end_time'] ?? '17:00'),
+            'days' => array_values(array_unique(array_filter(array_map(
+                static fn ($value): string => is_string($value) ? strtolower(trim($value)) : '',
+                is_array($payload['days'] ?? null) ? $payload['days'] : []
+            )))),
+        ];
+
+        $setting->update([
+            'timezone' => (string) ($payload['timezone'] ?? $setting->timezone ?? 'UTC'),
+            'rules' => $rules,
+        ]);
+
+        return $setting->refresh();
     }
 
     private function assertTenantRecord(int $expectedTenantId, int $recordTenantId): void
