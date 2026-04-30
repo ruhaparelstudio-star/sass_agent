@@ -5,6 +5,7 @@ namespace App\Modules\WhatsApp\Services;
 use App\Enums\MessageDirection;
 use App\Models\Conversation;
 use App\Models\ConversationContext;
+use App\Models\ConversationState;
 use App\Models\DecisionTrace;
 use App\Models\Tenant;
 use App\Models\WaInboundMessage;
@@ -114,7 +115,7 @@ TEXT;
             ], 'text', $inboundMessage->payload ?? null);
 
             $features = $this->featureGateService->resolveForTenant($tenant->id);
-            $context = $this->buildContext($tenant, $conversation, $state->active_goal, $features, $inboundMessage, $text, $customerPhone);
+            $context = $this->buildContext($tenant, $conversation, $state, $features, $inboundMessage, $text, $customerPhone);
             $executedSteps[] = 'retrieve_knowledge';
             $pipeline = $this->turnPipelineService->handle(
                 $tenant,
@@ -126,6 +127,7 @@ TEXT;
             $executedSteps[] = 'interpret_and_extract_entities';
             $executedSteps[] = 'build_and_validate_decision';
             $this->conversationService->syncLeadFromEntities($conversation, $tenant, is_array($pipeline['entities'] ?? null) ? $pipeline['entities'] : []);
+            $this->persistDurableStateFromPipeline($tenant, $conversation, $state, $pipeline);
 
             $executedSteps[] = 'compose_response';
             $replyText = $this->composeReplyText($pipeline);
@@ -267,13 +269,117 @@ TEXT;
     }
 
     /**
+     * @param  array<string,mixed>  $pipeline
+     */
+    private function persistDurableStateFromPipeline(
+        Tenant $tenant,
+        Conversation $conversation,
+        ConversationState $state,
+        array $pipeline
+    ): void {
+        $entities = is_array($pipeline['entities'] ?? null) ? $pipeline['entities'] : [];
+        $blockedAction = $pipeline['blocked_actions'][0]['action'] ?? null;
+        $allowedAction = $pipeline['allowed_actions'][0] ?? null;
+
+        $pendingAction = $state->pending_action;
+        if (is_string($blockedAction) && trim($blockedAction) !== '') {
+            $pendingAction = trim($blockedAction);
+        } elseif (is_string($allowedAction) && in_array($allowedAction, ['send_file', 'send_booking_link'], true)) {
+            $pendingAction = null;
+        }
+
+        $customerName = $this->firstNonEmptyString([
+            $entities['customer_name'] ?? null,
+            $entities['name'] ?? null,
+            $state->customer_name,
+        ]);
+
+        $eventType = $this->firstNonEmptyString([
+            $entities['event_type'] ?? null,
+            $state->event_type,
+        ]);
+
+        $serviceInterest = $this->firstNonEmptyString([
+            $entities['service_interest'] ?? null,
+            $entities['event_type'] ?? null,
+            $entities['package_interest'] ?? null,
+            $entities['package_query'] ?? null,
+            $state->service_interest,
+        ]);
+
+        $packageInterest = $this->firstNonEmptyString([
+            $entities['package_interest'] ?? null,
+            $entities['resolved_package_name'] ?? null,
+            $entities['package_query'] ?? null,
+            $state->package_interest,
+        ]);
+
+        $selectedPackage = $this->firstNonEmptyString([
+            $entities['resolved_package_name'] ?? null,
+            $entities['package_query'] ?? null,
+            $state->selected_package,
+        ]);
+
+        $this->conversationService->upsertState($conversation, $tenant, [
+            'customer_name' => $customerName,
+            'event_type' => $eventType,
+            'service_interest' => $serviceInterest,
+            'package_interest' => $packageInterest,
+            'selected_package' => $selectedPackage,
+            'pending_action' => $pendingAction,
+        ]);
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function buildPersistedEntityContext(ConversationState $state): array
+    {
+        $name = $this->firstNonEmptyString([$state->customer_name]);
+        $eventType = $this->firstNonEmptyString([$state->event_type]);
+        $serviceInterest = $this->firstNonEmptyString([$state->service_interest]);
+        $packageInterest = $this->firstNonEmptyString([$state->package_interest]);
+        $selectedPackage = $this->firstNonEmptyString([$state->selected_package]);
+
+        return [
+            'customer_name' => $name,
+            'name' => $name,
+            'event_type' => $eventType,
+            'service_interest' => $serviceInterest,
+            'package_interest' => $packageInterest,
+            'package_query' => $packageInterest,
+            'resolved_package_name' => $selectedPackage,
+            'selected_package' => $selectedPackage,
+        ];
+    }
+
+    /**
+     * @param  array<int,mixed>  $candidates
+     */
+    private function firstNonEmptyString(array $candidates): ?string
+    {
+        foreach ($candidates as $candidate) {
+            if (! is_string($candidate)) {
+                continue;
+            }
+
+            $normalized = trim($candidate);
+            if ($normalized !== '') {
+                return $normalized;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * @param  array<string,mixed>  $features
      * @return array<string,mixed>
      */
     private function buildContext(
         Tenant $tenant,
         Conversation $conversation,
-        ?string $activeGoal,
+        ConversationState $state,
         array $features,
         WaInboundMessage $inboundMessage,
         string $userMessage,
@@ -313,7 +419,7 @@ TEXT;
             'source' => 'policy',
         ];
 
-        if (($features['calendar_access'] ?? false) === true && $this->shouldCheckCalendar($activeGoal, $userMessage)) {
+        if (($features['calendar_access'] ?? false) === true && $this->shouldCheckCalendar($state->active_goal, $userMessage)) {
             $calendarCheck = $this->calendarAvailabilityService->check($tenant, [
                 'conversation_id' => $conversation->id,
                 'message_hint' => mb_substr($userMessage, 0, 120),
@@ -336,6 +442,7 @@ TEXT;
             'availability_checked' => $calendarCheck['checked'] === true,
             'lead_limit' => $leadLimitEvaluation,
             'previous_blocked_action' => $previousBlockedAction,
+            'entities' => $this->buildPersistedEntityContext($state),
             'package_detail_lookup' => $packageDetailLookup,
             'pricelist_asset' => $pricelist,
             'delivery_channel' => [
@@ -382,7 +489,8 @@ TEXT;
             return true;
         }
 
-        return preg_match('/\b(booking|jadwal|tanggal|available|availability)\b/i', $userMessage) === 1;
+        return preg_match('/\b(booking|book|reservasi|jadwal|tanggal|available|availability|deal)\b/i', $userMessage) === 1
+            || preg_match('/\bambil\s+paket\b/i', $userMessage) === 1;
     }
 
     /**

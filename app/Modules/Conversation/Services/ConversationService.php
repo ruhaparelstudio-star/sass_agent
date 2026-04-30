@@ -114,6 +114,12 @@ class ConversationService
         $defaults = [
             'current_stage' => 'new',
             'active_goal' => null,
+            'customer_name' => null,
+            'event_type' => null,
+            'service_interest' => null,
+            'package_interest' => null,
+            'selected_package' => null,
+            'pending_action' => null,
             'agent_mode' => 'assistant',
             'memory_mode' => 'short',
             'retention_policy' => 'standard',

@@ -147,7 +147,8 @@ class TurnPipelineService
             $interpretation->confidence,
             $state->agent_mode,
             $result,
-            $context
+            $context,
+            $dispatchTrace
         );
         $handoffRequired = $handoffSignal['required'];
 
@@ -338,13 +339,25 @@ class TurnPipelineService
 
     private function mergeEntities(array $previous, array $current): array
     {
+        $merged = is_array($previous) ? $previous : [];
+
+        foreach ($current as $key => $value) {
+            if (! is_string($key)) {
+                continue;
+            }
+
+            if (! $this->shouldApplyCurrentEntityValue($value)) {
+                continue;
+            }
+
+            $merged[$key] = $value;
+        }
+
         $isCorrection = ($current['is_correction'] ?? false) === true;
 
         if (! $isCorrection) {
-            return $current;
+            return $merged;
         }
-
-        $merged = $previous;
         $merged['is_correction'] = true;
         $merged['corrected_fields'] = $current['corrected_fields'] ?? [];
         $fields = $current['corrected_fields'] ?? [];
@@ -398,6 +411,23 @@ class TurnPipelineService
         }
 
         return $merged;
+    }
+
+    private function shouldApplyCurrentEntityValue(mixed $value): bool
+    {
+        if ($value === null) {
+            return false;
+        }
+
+        if (is_string($value)) {
+            return trim($value) !== '';
+        }
+
+        if (is_array($value)) {
+            return $value !== [];
+        }
+
+        return true;
     }
 
     private function buildCandidate(Intent $intent, array $entities, ?LeadProfile $leadProfile, array $context): array
@@ -467,10 +497,19 @@ class TurnPipelineService
             $reasons[] = 'missing_availability_check';
         }
 
-        return [
+        $candidate = [
             'action' => 'send_booking_link',
             'reasons' => $reasons,
         ];
+
+        $sendBookingLinkMeta = $this->buildSendBookingLinkMeta($context);
+        if ($sendBookingLinkMeta !== null) {
+            $candidate['meta'] = [
+                'send_booking_link' => $sendBookingLinkMeta,
+            ];
+        }
+
+        return $candidate;
     }
 
     private function buildResponsePlanMessage(Intent $intent, array $candidates, Tenant $tenant, array $entities = [], array $context = []): string
@@ -724,6 +763,36 @@ class TurnPipelineService
         ];
     }
 
+    /**
+     * @return array<string,mixed>|null
+     */
+    private function buildSendBookingLinkMeta(array $context): ?array
+    {
+        $delivery = $context['delivery_channel'] ?? null;
+        if (! is_array($delivery)) {
+            return null;
+        }
+
+        $provider = trim((string) ($delivery['provider'] ?? ''));
+        $waAccountProviderRef = trim((string) ($delivery['wa_account_provider_ref'] ?? ''));
+        $to = trim((string) ($delivery['to'] ?? ''));
+
+        if ($provider === '' || $waAccountProviderRef === '' || $to === '') {
+            return null;
+        }
+
+        return [
+            'provider' => $provider,
+            'wa_account_provider_ref' => $waAccountProviderRef,
+            'wa_session_provider_ref' => $delivery['wa_session_provider_ref'] ?? null,
+            'provider_message_id' => null,
+            'to' => $to,
+            'meta' => [
+                'source' => 'turn_pipeline',
+            ],
+        ];
+    }
+
     private function detectMimeTypeFromFilename(string $fileName): string
     {
         $extension = strtolower((string) pathinfo($fileName, PATHINFO_EXTENSION));
@@ -836,7 +905,8 @@ class TurnPipelineService
         float $confidence,
         string $agentMode,
         array $candidates,
-        array $context
+        array $context,
+        array $dispatchTrace
     ): array
     {
         $agentMode = $this->normalizeAgentMode($agentMode);
@@ -870,6 +940,25 @@ class TurnPipelineService
                 'required' => true,
                 'reason_code' => 'request_handoff',
                 'priority' => 'high',
+            ];
+        }
+
+        if ($intent === Intent::BookingIntent) {
+            $bookingLinkDispatched = (($dispatchTrace['action'] ?? null) === 'send_booking_link')
+                && (($dispatchTrace['status'] ?? null) === 'executed');
+
+            if ($bookingLinkDispatched) {
+                return [
+                    'required' => true,
+                    'reason_code' => 'booking_requested',
+                    'priority' => 'high',
+                ];
+            }
+
+            return [
+                'required' => false,
+                'reason_code' => null,
+                'priority' => null,
             ];
         }
 
