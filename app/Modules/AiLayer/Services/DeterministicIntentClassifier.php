@@ -45,6 +45,9 @@ class DeterministicIntentClassifier implements IntentClassifierContract
             $userMessage,
             $decoded['entities']
         );
+        if ($intent === Intent::Unknown) {
+            $intent = $this->inferIntentFromMessage($userMessage, $isCorrection);
+        }
 
         [$resolvedCode, $resolvedName] = $this->resolvePackageAlias($tenantId, $packageQuery);
 
@@ -280,5 +283,59 @@ class DeterministicIntentClassifier implements IntentClassifierContract
         }
 
         return $normalized;
+    }
+
+    private function inferIntentFromMessage(string $userMessage, bool $isCorrection): Intent
+    {
+        $text = mb_strtolower(trim($userMessage));
+        if ($text === '') {
+            return Intent::UnclearMessage;
+        }
+
+        if (preg_match('/\b(komplain|complain|kecewa|marah|ga puas|tidak puas)\b/u', $text) === 1) {
+            return Intent::Complaint;
+        }
+
+        if (preg_match('/\b(admin|operator|cs|human|orang|takeover|handoff)\b/u', $text) === 1) {
+            return Intent::RequestHandoff;
+        }
+
+        if (preg_match('/\b(topic|bahas|ganti topik|pindah topik)\b/u', $text) === 1) {
+            return Intent::TopicSwitch;
+        }
+
+        if ($isCorrection) {
+            return Intent::Correction;
+        }
+
+        if (preg_match('/\b(pricelist|price ?list|brosur|katalog pdf)\b/u', $text) === 1) {
+            return Intent::AskPricelist;
+        }
+
+        if (preg_match('/\b(harga|biaya|berapa)\b/u', $text) === 1) {
+            return Intent::AskPrice;
+        }
+
+        if (preg_match('/\b(detail paket|isi paket|include|fasilitas)\b/u', $text) === 1) {
+            return Intent::AskPackageDetail;
+        }
+
+        if (preg_match('/\b(available|availability|jadwal|tanggal kosong|slot)\b/u', $text) === 1) {
+            return Intent::AskAvailability;
+        }
+
+        if (preg_match('/\b(booking|book|reservasi|jadi ambil|jadi deal)\b/u', $text) === 1) {
+            return Intent::BookingIntent;
+        }
+
+        if (preg_match('/\b(bayar|pembayaran|invoice|dp|lunas|transfer)\b/u', $text) === 1) {
+            return Intent::PaymentRelated;
+        }
+
+        if (preg_match('/^[\p{L}\p{N}\s?!.]{1,10}$/u', $text) === 1) {
+            return Intent::UnclearMessage;
+        }
+
+        return Intent::Unknown;
     }
 }

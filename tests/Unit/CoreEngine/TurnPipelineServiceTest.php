@@ -214,6 +214,13 @@ class TurnPipelineServiceTest extends TestCase
     public function test_correction_updates_only_targeted_entity_without_reset(): void
     {
         [$tenant, $conversation] = $this->createConversation();
+        ConversationState::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->update([
+                'current_stage' => 'qualifying',
+                'active_goal' => 'pricing',
+            ]);
 
         $this->bindLlmJson('{"intent":"ask_price","confidence":0.82,"entities":{"package_query":"silver","event_date":"21/12/2026","correction":true,"corrected_fields":["package_query"]}}');
 
@@ -234,6 +241,10 @@ class TurnPipelineServiceTest extends TestCase
         $this->assertSame('silver', $result['entities']['package_query']);
         $this->assertSame('2026-12-21', $result['entities']['event_date_iso']);
         $this->assertSame(15000000, $result['entities']['budget_amount']);
+
+        $freshState = ConversationState::query()->where('conversation_id', $conversation->id)->firstOrFail();
+        $this->assertSame('qualifying', $freshState->current_stage);
+        $this->assertSame('pricing', $freshState->active_goal);
     }
 
     public function test_topic_switch_updates_active_goal_only_when_topic_changes(): void
@@ -486,6 +497,158 @@ class TurnPipelineServiceTest extends TestCase
 
         $this->assertSame('send_file', $result['action_candidates']['blocked'][0]['action']);
         $this->assertSame(['mode_limited_blocked_action'], $result['action_candidates']['blocked'][0]['reasons']);
+    }
+
+    public function test_decision_contract_contains_required_prd_fields_and_entity_shape(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        $this->bindLlmJson('{"intent":"ask_pricelist","confidence":0.9,"entities":{"package_query":"gold","event_date":"21/12/2026","event_type":"wedding","location":"bandung","budget":"15000000","customer_name":"Ayu"}}');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'minta pricelist paket gold',
+            'extract intent'
+        );
+
+        $this->assertArrayHasKey('intent', $result);
+        $this->assertArrayHasKey('confidence', $result);
+        $this->assertArrayHasKey('entities', $result);
+        $this->assertArrayHasKey('current_stage', $result);
+        $this->assertArrayHasKey('active_goal', $result);
+        $this->assertArrayHasKey('decision', $result);
+        $this->assertArrayHasKey('allowed_actions', $result);
+        $this->assertArrayHasKey('blocked_actions', $result);
+        $this->assertArrayHasKey('handoff_required', $result);
+        $this->assertArrayHasKey('notification_required', $result);
+        $this->assertArrayHasKey('grounding_refs', $result);
+        $this->assertArrayHasKey('reply_strategy', $result);
+
+        $this->assertArrayHasKey('name', $result['entities']);
+        $this->assertArrayHasKey('event_date', $result['entities']);
+        $this->assertArrayHasKey('event_type', $result['entities']);
+        $this->assertArrayHasKey('location', $result['entities']);
+        $this->assertArrayHasKey('package_interest', $result['entities']);
+        $this->assertArrayHasKey('budget', $result['entities']);
+    }
+
+    public function test_invalid_classifier_json_fails_safe_and_does_not_enable_sensitive_action(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        $this->bindLlmJson('{"intent":"ask_pricelist"');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'kirim pricelist ya',
+            'extract intent'
+        );
+
+        $this->assertSame('unknown', $result['intent']);
+        $this->assertSame('handoff_required', $result['decision']);
+        $this->assertSame(['reply_safe_text'], $result['allowed_actions']);
+        $this->assertSame([], $result['blocked_actions']);
+        $this->assertTrue($result['handoff_required']);
+        $this->assertTrue($result['notification_required']);
+        $this->assertFalse(in_array('send_file', $result['allowed_actions'], true));
+        $this->assertFalse(in_array('send_booking_link', $result['allowed_actions'], true));
+        $this->assertFalse(in_array('send_invoice', $result['allowed_actions'], true));
+        $this->assertSame('invalid_json', $result['trace']['fallback_reason']);
+        $this->assertSame('reply_safe_text', $result['trace']['action']);
+    }
+
+    public function test_complaint_intent_triggers_handoff_signal_with_high_priority(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        $this->bindLlmJson('{"intent":"complaint","confidence":0.93,"entities":{}}');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'Saya komplain soal layanan tadi.',
+            'extract intent'
+        );
+
+        $this->assertTrue($result['handoff_required']);
+        $this->assertTrue($result['notification_required']);
+        $this->assertSame('complaint_detected', $result['handoff_reason_code']);
+        $this->assertSame('high', $result['handoff_priority']);
+        $this->assertSame('handoff_required', $result['decision']);
+    }
+
+    public function test_calendar_unavailable_triggers_handoff_signal_with_high_priority(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        $this->bindLlmJson('{"intent":"ask_availability","confidence":0.84,"entities":{"event_date":"21/12/2026"}}');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'Ada slot tanggal 21 desember 2026?',
+            'extract intent',
+            [
+                'calendar_check' => [
+                    'status' => 'blocked',
+                    'checked' => true,
+                    'available' => false,
+                    'reason' => 'calendar_unavailable',
+                    'source' => 'calendar_api',
+                ],
+            ]
+        );
+
+        $this->assertTrue($result['handoff_required']);
+        $this->assertSame('calendar_unavailable', $result['handoff_reason_code']);
+        $this->assertSame('high', $result['handoff_priority']);
+    }
+
+    public function test_lead_limit_exhausted_triggers_handoff_signal_with_high_priority(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        $this->bindLlmJson('{"intent":"ask_pricelist","confidence":0.86,"entities":{"package_query":"gold"}}');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'minta pricelist',
+            'extract intent',
+            [
+                'lead_limit' => [
+                    'limit_exhausted_for_new_lead' => true,
+                ],
+            ]
+        );
+
+        $this->assertTrue($result['handoff_required']);
+        $this->assertSame('lead_limit_exhausted', $result['handoff_reason_code']);
+        $this->assertSame('high', $result['handoff_priority']);
+    }
+
+    public function test_paused_mode_triggers_critical_handoff_signal(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+        ConversationState::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->update(['agent_mode' => 'paused']);
+
+        $this->bindLlmJson('{"intent":"ask_price","confidence":0.90,"entities":{"package_query":"gold"}}');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'berapa harganya?',
+            'extract intent'
+        );
+
+        $this->assertTrue($result['handoff_required']);
+        $this->assertSame('mode_paused', $result['handoff_reason_code']);
+        $this->assertSame('critical', $result['handoff_priority']);
     }
 
     private function createConversation(): array

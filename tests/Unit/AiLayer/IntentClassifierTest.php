@@ -203,6 +203,86 @@ class IntentClassifierTest extends TestCase
         $this->assertSame('gold', $result->entities['resolved_package_code']);
     }
 
+    public function test_priority_intent_fallback_regression_from_message_pattern(): void
+    {
+        $tenant = $this->createTenantWithPackage('tenant-one', 'gold', 'Gold Package');
+        $classifier = app(DeterministicIntentClassifier::class);
+
+        $cases = [
+            'ask_pricelist' => [
+                'tolong kirim pricelist terbaru',
+                [],
+                Intent::AskPricelist,
+            ],
+            'ask_price' => [
+                'berapa harga paket gold?',
+                [],
+                Intent::AskPrice,
+            ],
+            'ask_package_detail' => [
+                'detail paket gold include apa saja?',
+                [],
+                Intent::AskPackageDetail,
+            ],
+            'ask_availability' => [
+                'tanggal 21 desember masih available?',
+                [],
+                Intent::AskAvailability,
+            ],
+            'booking_intent' => [
+                'oke saya mau booking sekarang',
+                [],
+                Intent::BookingIntent,
+            ],
+            'request_handoff' => [
+                'saya mau bicara admin',
+                [],
+                Intent::RequestHandoff,
+            ],
+            'complaint' => [
+                'saya komplain, kecewa banget',
+                [],
+                Intent::Complaint,
+            ],
+            'payment_related' => [
+                'untuk pembayaran dp transfer kemana?',
+                [],
+                Intent::PaymentRelated,
+            ],
+            'topic_switch' => [
+                'ganti topik, kita bahas booking aja',
+                [],
+                Intent::TopicSwitch,
+            ],
+            'correction' => [
+                'koreksi, budget saya revisi jadi 20 juta',
+                ['correction' => true, 'corrected_fields' => ['budget']],
+                Intent::Correction,
+            ],
+            'unclear_message' => [
+                'halo?',
+                [],
+                Intent::UnclearMessage,
+            ],
+        ];
+
+        foreach ($cases as $label => [$userMessage, $entities, $expectedIntent]) {
+            $payload = json_encode([
+                'intent' => 'unknown',
+                'confidence' => 0.2,
+                'entities' => $entities,
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+            $result = $classifier->classify(
+                $tenant->id,
+                $userMessage,
+                is_string($payload) ? $payload : '{"intent":"unknown","confidence":0.2,"entities":{}}'
+            );
+
+            $this->assertSame($expectedIntent, $result->intent, 'Failed case: '.$label);
+        }
+    }
+
     private function createTenantWithPackage(string $slug, string $packageCode, string $packageName): Tenant
     {
         $tenant = Tenant::query()->create([

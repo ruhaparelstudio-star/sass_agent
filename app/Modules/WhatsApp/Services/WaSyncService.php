@@ -160,6 +160,10 @@ class WaSyncService
             'provider_message_id' => $data['provider_message_id'],
         ]);
 
+        if ($inboundMessage->exists) {
+            return $inboundMessage->refresh();
+        }
+
         $inboundMessage->fill([
             'wa_account_id' => $account->id,
             'wa_session_id' => $session?->id,

@@ -109,4 +109,58 @@ class GroundingValidatorServiceTest extends TestCase
 
         $this->assertSame('grounding_calendar_missing_source', $reason);
     }
+
+    public function test_blocks_send_file_when_price_is_not_grounded(): void
+    {
+        $validator = new GroundingValidatorService;
+
+        $reason = $validator->validate(
+            ['action' => 'send_file'],
+            [
+                'grounding' => [
+                    'price' => ['is_grounded' => false],
+                    'package' => ['is_grounded' => true],
+                    'file' => ['is_grounded' => true],
+                ],
+            ]
+        );
+
+        $this->assertSame('grounding_price_missing_source', $reason);
+    }
+
+    public function test_blocks_send_file_when_pricelist_asset_is_not_grounded(): void
+    {
+        $validator = new GroundingValidatorService;
+
+        $reason = $validator->validate(
+            ['action' => 'send_file'],
+            [
+                'grounding' => [
+                    'price' => ['is_grounded' => true],
+                    'package' => ['is_grounded' => true],
+                    'file' => ['is_grounded' => false],
+                ],
+            ]
+        );
+
+        $this->assertSame('grounding_file_missing_source', $reason);
+    }
+
+    public function test_blocks_send_invoice_when_invoice_claim_is_not_grounded(): void
+    {
+        $validator = new GroundingValidatorService;
+
+        $reason = $validator->validate(
+            ['action' => 'send_invoice'],
+            [
+                'grounding' => [
+                    'invoice' => ['is_grounded' => false],
+                    'price' => ['is_grounded' => true],
+                    'file' => ['is_grounded' => true],
+                ],
+            ]
+        );
+
+        $this->assertSame('grounding_invoice_missing_source', $reason);
+    }
 }

@@ -127,4 +127,40 @@ class AuditLoggingTest extends TestCase
             'reason' => 'forbidden_tenant_scope',
         ]);
     }
+
+    public function test_health_db_secret_denial_is_logged_once_with_redacted_header(): void
+    {
+        Config::set('whatsapp.internal_secret', 'health-secret');
+
+        $this->withHeader('X-Internal-Secret', 'wrong-secret')
+            ->getJson('/health/db')
+            ->assertForbidden();
+
+        $this->assertSame(
+            1,
+            \App\Models\AuditLog::query()
+                ->where('event_key', 'whatsapp.internal_secret.denied')
+                ->where('endpoint', 'health/db')
+                ->count()
+        );
+
+        $row = \App\Models\AuditLog::query()->latest('id')->firstOrFail();
+        $this->assertSame('invalid_internal_secret', $row->reason);
+        $this->assertSame('[REDACTED]', $row->context['headers']['x-internal-secret'] ?? null);
+    }
+
+    public function test_internal_secret_not_configured_reason_is_deterministic_in_non_testing_env(): void
+    {
+        Config::set('app.env', 'production');
+        Config::set('whatsapp.internal_secret', '');
+
+        $this->getJson('/health/redis')->assertForbidden();
+
+        $this->assertDatabaseHas('audit_logs', [
+            'event_key' => 'whatsapp.internal_secret.denied',
+            'endpoint' => 'health/redis',
+            'status_code' => 403,
+            'reason' => 'internal_secret_not_configured',
+        ]);
+    }
 }

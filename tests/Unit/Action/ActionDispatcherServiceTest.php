@@ -717,7 +717,7 @@ class ActionDispatcherServiceTest extends TestCase
         Queue::assertNothingPushed();
     }
 
-    public function test_allowed_send_invoice_executes_logs_attempt_and_sets_limited_mode(): void
+    public function test_allowed_send_invoice_executes_logs_attempt_and_sets_limited_dormant_mode(): void
     {
         Queue::fake();
         [$tenant, $conversation] = $this->createConversation();
@@ -764,6 +764,7 @@ class ActionDispatcherServiceTest extends TestCase
             'tenant_id' => $tenant->id,
             'conversation_id' => $conversation->id,
             'agent_mode' => 'limited',
+            'memory_mode' => 'dormant',
         ]);
         $this->assertDatabaseHas('action_logs', [
             'tenant_id' => $tenant->id,

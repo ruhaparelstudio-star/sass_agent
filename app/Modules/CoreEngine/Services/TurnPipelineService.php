@@ -131,12 +131,19 @@ class TurnPipelineService
             $result['allowed']
         ));
 
-        $handoffRequired = $this->shouldRequireHandoff($interpretation->confidence, $result);
+        $handoffSignal = $this->resolveHandoffSignal(
+            $interpretation->intent,
+            $interpretation->confidence,
+            $state->agent_mode,
+            $result,
+            $context
+        );
+        $handoffRequired = $handoffSignal['required'];
 
         $response = [
             'intent' => $interpretation->intent->value,
             'confidence' => $interpretation->confidence,
-            'entities' => $entities,
+            'entities' => $this->buildDecisionEntities($entities),
             'current_stage' => $state->current_stage,
             'active_goal' => $state->active_goal,
             'decision' => $this->deriveDecisionKeyword($result, $handoffRequired),
@@ -144,6 +151,8 @@ class TurnPipelineService
             'blocked_actions' => $blockedActions,
             'handoff_required' => $handoffRequired,
             'notification_required' => $handoffRequired,
+            'handoff_reason_code' => $handoffSignal['reason_code'],
+            'handoff_priority' => $handoffSignal['priority'],
             'grounding_refs' => $this->extractGroundingRefs($context['grounding'] ?? null),
             'reply_strategy' => $handoffRequired ? 'handoff_safe' : 'short_contextual_question',
             'state_snapshot' => [
@@ -178,6 +187,27 @@ class TurnPipelineService
         }
 
         return $response;
+    }
+
+    /**
+     * Keep internal normalized entities while enforcing PRD decision contract keys.
+     *
+     * @param  array<string,mixed>  $entities
+     * @return array<string,mixed>
+     */
+    private function buildDecisionEntities(array $entities): array
+    {
+        return array_merge(
+            $entities,
+            [
+                'name' => $entities['customer_name'] ?? null,
+                'event_date' => $entities['event_date_iso'] ?? null,
+                'event_type' => $entities['event_type'] ?? null,
+                'location' => $entities['location'] ?? null,
+                'package_interest' => $entities['resolved_package_name'] ?? ($entities['package_query'] ?? null),
+                'budget' => $entities['budget_amount'] ?? null,
+            ]
+        );
     }
 
     /**
@@ -424,25 +454,107 @@ class TurnPipelineService
         return $resolved;
     }
 
-    private function shouldRequireHandoff(float $confidence, array $candidates): bool
+    /**
+     * @param  array<string,mixed>  $candidates
+     * @param  array<string,mixed>  $context
+     * @return array{required:bool,reason_code:?string,priority:?string}
+     */
+    private function resolveHandoffSignal(
+        Intent $intent,
+        float $confidence,
+        string $agentMode,
+        array $candidates,
+        array $context
+    ): array
     {
+        if ($agentMode === 'paused') {
+            return [
+                'required' => true,
+                'reason_code' => 'mode_paused',
+                'priority' => 'critical',
+            ];
+        }
+
+        if ($agentMode === 'handoff') {
+            return [
+                'required' => true,
+                'reason_code' => 'mode_handoff',
+                'priority' => 'critical',
+            ];
+        }
+
+        if ($intent === Intent::Complaint) {
+            return [
+                'required' => true,
+                'reason_code' => 'complaint_detected',
+                'priority' => 'high',
+            ];
+        }
+
+        if ($intent === Intent::RequestHandoff) {
+            return [
+                'required' => true,
+                'reason_code' => 'request_handoff',
+                'priority' => 'high',
+            ];
+        }
+
+        $leadLimit = $context['lead_limit'] ?? null;
+        if (is_array($leadLimit) && (($leadLimit['limit_exhausted_for_new_lead'] ?? false) === true)) {
+            return [
+                'required' => true,
+                'reason_code' => 'lead_limit_exhausted',
+                'priority' => 'high',
+            ];
+        }
+
+        $calendarCheck = $context['calendar_check'] ?? null;
+        if (is_array($calendarCheck)
+            && (($calendarCheck['checked'] ?? false) === true)
+            && (($calendarCheck['available'] ?? false) === false)
+        ) {
+            return [
+                'required' => true,
+                'reason_code' => 'calendar_unavailable',
+                'priority' => 'high',
+            ];
+        }
+
         if ($confidence < self::LOW_CONFIDENCE_THRESHOLD) {
-            return true;
+            return [
+                'required' => true,
+                'reason_code' => 'low_confidence',
+                'priority' => 'medium',
+            ];
         }
 
         $blocked = $candidates['blocked'] ?? [];
         if (! is_array($blocked) || $blocked === []) {
-            return false;
+            return [
+                'required' => false,
+                'reason_code' => null,
+                'priority' => null,
+            ];
         }
 
         $firstReasons = $blocked[0]['reasons'] ?? [];
         if (! is_array($firstReasons)) {
-            return false;
+            return [
+                'required' => false,
+                'reason_code' => null,
+                'priority' => null,
+            ];
         }
 
-        return in_array('policy_tenant_blocked', $firstReasons, true)
+        $policyBlocked = in_array('policy_tenant_blocked', $firstReasons, true)
             || in_array('policy_global_blocked', $firstReasons, true)
             || in_array('policy_business_hours_blocked', $firstReasons, true);
+
+        return [
+            'required' => $policyBlocked,
+            'reason_code' => $policyBlocked ? 'policy_blocked' : null,
+            'priority' => $policyBlocked ? 'high' : null,
+        ];
     }
 
     private function deriveDecisionKeyword(array $candidates, bool $handoffRequired): string

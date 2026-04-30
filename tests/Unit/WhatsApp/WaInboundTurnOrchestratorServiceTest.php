@@ -2,6 +2,9 @@
 
 namespace Tests\Unit\WhatsApp;
 
+use App\Jobs\DispatchNotificationJob;
+use App\Models\Handoff;
+use App\Models\Notification;
 use App\Modules\AiLayer\Contracts\LlmClientContract;
 use App\Modules\AiLayer\DTO\LlmResponse;
 use App\Modules\WhatsApp\Services\WaInboundTurnOrchestratorService;
@@ -11,6 +14,7 @@ use App\Models\WaAccount;
 use App\Models\WaInboundMessage;
 use App\Models\WaSession;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 class WaInboundTurnOrchestratorServiceTest extends TestCase
@@ -80,6 +84,19 @@ class WaInboundTurnOrchestratorServiceTest extends TestCase
         $this->assertArrayHasKey('notification_required', $decision);
         $this->assertArrayHasKey('grounding_refs', $decision);
         $this->assertArrayHasKey('reply_strategy', $decision);
+        $this->assertSame([
+            'receive_inbound',
+            'deduplicate',
+            'load_tenant_and_wa_account',
+            'check_tenant_status_and_plan',
+            'load_conversation_and_state',
+            'interpret_and_extract_entities',
+            'retrieve_knowledge',
+            'build_and_validate_decision',
+            'compose_response',
+            'send_reply_action',
+            'store_trace',
+        ], $trace->meta['pipeline_steps'] ?? []);
 
         $this->assertDatabaseHas('messages', [
             'tenant_id' => $tenant->id,
@@ -150,6 +167,75 @@ class WaInboundTurnOrchestratorServiceTest extends TestCase
             ->count());
     }
 
+    public function test_inbound_turn_orchestrator_creates_handoff_and_notification_when_handoff_required(): void
+    {
+        Queue::fake();
+        $this->bindLlmJson('{"intent":"complaint","confidence":0.95,"entities":{}}');
+
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+
+        $account = WaAccount::query()->create([
+            'tenant_id' => $tenant->id,
+            'provider' => 'meta',
+            'provider_ref' => 'acct-001',
+            'phone' => '+628111',
+            'status' => 'connected',
+            'last_payload' => ['event' => 'connected'],
+        ]);
+
+        $session = WaSession::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'provider' => 'meta',
+            'provider_ref' => 'sess-001',
+            'status' => 'active',
+            'last_payload' => ['event' => 'active'],
+        ]);
+
+        $inbound = WaInboundMessage::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'wa_session_id' => $session->id,
+            'provider' => 'meta',
+            'provider_message_id' => 'msg-complaint-001',
+            'from' => '+628111',
+            'to' => '+628222',
+            'message_type' => 'text',
+            'message_timestamp' => now(),
+            'payload' => [
+                'message' => [
+                    'conversation' => 'Saya komplain dan mau bicara admin.',
+                ],
+            ],
+            'meta' => ['source' => 'test'],
+        ]);
+
+        app(WaInboundTurnOrchestratorService::class)->process($tenant, $inbound);
+
+        $handoff = Handoff::query()->where('tenant_id', $tenant->id)->firstOrFail();
+        $notification = Notification::query()->where('tenant_id', $tenant->id)->firstOrFail();
+
+        $this->assertSame('complaint_detected', $handoff->reason_code);
+        $this->assertSame('pending', $handoff->status);
+        $this->assertSame('high', $handoff->context['priority'] ?? null);
+        $this->assertSame('inbound_turn_pipeline', $handoff->context['source'] ?? null);
+        $this->assertSame($inbound->id, $handoff->context['inbound_message_id'] ?? null);
+
+        $this->assertSame($handoff->id, $notification->handoff_id);
+        $this->assertSame('handoff_created', $notification->type);
+        $this->assertSame('queued', $notification->status);
+        $this->assertSame('complaint_detected', $notification->payload['reason_code'] ?? null);
+        $this->assertSame('high', $notification->payload['context']['priority'] ?? null);
+
+        Queue::assertPushed(DispatchNotificationJob::class, function (DispatchNotificationJob $job) use ($tenant, $notification): bool {
+            return $job->tenantId === $tenant->id && $job->notificationId === $notification->id;
+        });
+    }
+
     private function bindLlmJson(string $json): void
     {
         $this->app->bind(LlmClientContract::class, fn () => new class($json) implements LlmClientContract
@@ -168,4 +254,3 @@ class WaInboundTurnOrchestratorServiceTest extends TestCase
         });
     }
 }
-

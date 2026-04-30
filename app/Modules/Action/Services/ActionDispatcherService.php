@@ -465,7 +465,10 @@ class ActionDispatcherService
                 ConversationState::query()
                     ->where('tenant_id', $tenant->id)
                     ->where('conversation_id', $conversation->id)
-                    ->update(['agent_mode' => 'limited']);
+                    ->update([
+                        'agent_mode' => 'limited',
+                        'memory_mode' => 'dormant',
+                    ]);
 
                 return [
                     'status' => 'executed',

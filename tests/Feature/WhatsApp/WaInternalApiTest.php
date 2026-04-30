@@ -3,6 +3,8 @@
 namespace Tests\Feature\WhatsApp;
 
 use App\Jobs\DispatchWaOutboundMessageJob;
+use App\Modules\AiLayer\Contracts\LlmClientContract;
+use App\Modules\AiLayer\DTO\LlmResponse;
 use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -394,6 +396,80 @@ class WaInternalApiTest extends TestCase
             'from' => '+628111',
             'to' => '+628222',
         ]);
+
+        $stored = \App\Models\WaInboundMessage::query()
+            ->where('tenant_id', $tenantOne->id)
+            ->where('provider_message_id', 'msg-001')
+            ->firstOrFail();
+
+        $this->assertSame('hello', $stored->payload['text'] ?? null);
+    }
+
+    public function test_duplicate_inbound_replay_does_not_duplicate_outbound_or_action_logs(): void
+    {
+        Config::set('whatsapp.internal_secret', 'wa-internal-secret');
+
+        $this->app->bind(LlmClientContract::class, fn () => new class implements LlmClientContract
+        {
+            public function complete(int $tenantId, string $userMessage, string $instruction): LlmResponse
+            {
+                return new LlmResponse(
+                    content: '{"intent":"ask_package","confidence":0.92,"entities":{}}',
+                    model: 'feature-test-model',
+                    totalTokens: 12,
+                    raw: ['tenant_id' => $tenantId, 'message' => $userMessage]
+                );
+            }
+        });
+
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+
+        [$token, $headers] = $this->issueInternalApiTokenForTenant($tenant);
+        $this->provisionInboundReferences($token, $headers, $tenant->id);
+
+        $payload = [
+            ...$this->baseInboundPayload($tenant->id, '+628111'),
+            'provider_message_id' => 'msg-replay-001',
+            'payload' => [
+                'message' => [
+                    'conversation' => 'paketnya apa saja?',
+                ],
+            ],
+        ];
+
+        $first = $this->withToken($token)->withHeaders($headers)
+            ->postJson('/api/internal/whatsapp/inbound-messages', $payload)
+            ->assertOk();
+
+        $inboundId = $first->json('data.id');
+        $this->assertNotNull($inboundId);
+
+        $actionCount = \App\Models\ActionLog::query()->count();
+        $outboundCount = \App\Models\WaOutboundMessage::query()->count();
+        $inboundTurnTraceCount = \App\Models\DecisionTrace::query()->where('trace_key', 'inbound_turn')->count();
+        $actionTraceCount = \App\Models\DecisionTrace::query()->where('trace_key', 'action_dispatch')->count();
+
+        $second = $this->withToken($token)->withHeaders($headers)
+            ->postJson('/api/internal/whatsapp/inbound-messages', [
+                ...$payload,
+                'payload' => [
+                    'message' => [
+                        'conversation' => 'REPLAY MESSAGE SHOULD NOT REPROCESS',
+                    ],
+                ],
+                'meta' => ['source' => 'replay'],
+            ])
+            ->assertOk();
+
+        $this->assertSame($inboundId, $second->json('data.id'));
+        $this->assertSame($actionCount, \App\Models\ActionLog::query()->count());
+        $this->assertSame($outboundCount, \App\Models\WaOutboundMessage::query()->count());
+        $this->assertSame($inboundTurnTraceCount, \App\Models\DecisionTrace::query()->where('trace_key', 'inbound_turn')->count());
+        $this->assertSame($actionTraceCount, \App\Models\DecisionTrace::query()->where('trace_key', 'action_dispatch')->count());
     }
 
     public function test_inbound_message_payload_and_reference_contracts_are_enforced(): void
@@ -726,7 +802,7 @@ class WaInternalApiTest extends TestCase
             'message_type' => 'text',
             'status' => 'pending',
         ]);
-        Queue::assertPushed(DispatchWaOutboundMessageJob::class, 2);
+        Queue::assertPushed(DispatchWaOutboundMessageJob::class, 1);
     }
 
     public function test_outbound_message_payload_and_reference_contracts_are_enforced(): void
@@ -779,6 +855,88 @@ class WaInternalApiTest extends TestCase
             'message_type' => 'text',
             'payload' => 'bad-payload',
         ])->assertStatus(422);
+    }
+
+    public function test_outbound_message_with_foreign_session_reference_is_rejected_without_side_effects(): void
+    {
+        Queue::fake();
+        Config::set('whatsapp.internal_secret', 'wa-internal-secret');
+
+        $tenantOne = Tenant::query()->create([
+            'name' => 'Tenant One',
+            'slug' => 'tenant-one',
+            'is_active' => true,
+        ]);
+        $tenantTwo = Tenant::query()->create([
+            'name' => 'Tenant Two',
+            'slug' => 'tenant-two',
+            'is_active' => true,
+        ]);
+
+        $admin = User::factory()->create([
+            'role' => 'tenant_admin',
+            'password' => 'password',
+        ]);
+        $admin->tenants()->attach($tenantOne->id);
+
+        $token = $this->postJson('/api/auth/login', [
+            'email' => $admin->email,
+            'password' => 'password',
+        ])->json('token');
+
+        $headers = ['X-Internal-Secret' => 'wa-internal-secret'];
+
+        $this->withToken($token)->withHeaders($headers)->postJson('/api/internal/whatsapp/accounts/upsert', [
+            'tenant_id' => $tenantOne->id,
+            'provider' => 'meta',
+            'provider_ref' => 'acct-001',
+            'status' => 'connected',
+            'phone' => '+628166666666',
+            'payload' => ['event' => 'connected'],
+        ])->assertOk();
+
+        $this->withToken($token)->withHeaders($headers)->postJson('/api/internal/whatsapp/accounts/upsert', [
+            'tenant_id' => $tenantTwo->id,
+            'provider' => 'meta',
+            'provider_ref' => 'acct-002',
+            'status' => 'connected',
+            'phone' => '+628177777777',
+            'payload' => ['event' => 'connected'],
+        ])->assertForbidden();
+
+        User::query()->whereKey($admin->id)->firstOrFail()->tenants()->sync([$tenantOne->id, $tenantTwo->id]);
+
+        $this->withToken($token)->withHeaders($headers)->postJson('/api/internal/whatsapp/accounts/upsert', [
+            'tenant_id' => $tenantTwo->id,
+            'provider' => 'meta',
+            'provider_ref' => 'acct-002',
+            'status' => 'connected',
+            'phone' => '+628177777777',
+            'payload' => ['event' => 'connected'],
+        ])->assertOk();
+
+        $this->withToken($token)->withHeaders($headers)->postJson('/api/internal/whatsapp/sessions/upsert', [
+            'tenant_id' => $tenantTwo->id,
+            'wa_account_provider_ref' => 'acct-002',
+            'provider' => 'meta',
+            'provider_ref' => 'sess-foreign',
+            'status' => 'active',
+            'payload' => ['event' => 'active'],
+        ])->assertOk();
+
+        $this->withToken($token)->withHeaders($headers)->postJson('/api/internal/whatsapp/outbound-messages', [
+            'tenant_id' => $tenantOne->id,
+            'provider' => 'meta',
+            'wa_account_provider_ref' => 'acct-001',
+            'wa_session_provider_ref' => 'sess-foreign',
+            'provider_message_id' => 'out-foreign-session',
+            'to' => '+628111',
+            'message_type' => 'text',
+            'payload' => ['text' => 'hello'],
+        ])->assertStatus(422);
+
+        $this->assertDatabaseCount('wa_outbound_messages', 0);
+        Queue::assertNothingPushed();
     }
 
     /**

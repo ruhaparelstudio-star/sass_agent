@@ -30,9 +30,17 @@ enum Intent: string
         $normalized = strtolower(trim($value));
         $aliases = [
             'ask_package_list' => self::AskPackage,
+            'package_detail' => self::AskPackageDetail,
             'ask_package_comparison' => self::AskPackageDetail,
+            'ask_availability_date' => self::AskAvailability,
+            'availability' => self::AskAvailability,
             'ask_booking_flow' => self::BookingIntent,
             'request_admin' => self::RequestHandoff,
+            'handoff' => self::RequestHandoff,
+            'payment' => self::PaymentRelated,
+            'topic_change' => self::TopicSwitch,
+            'revise' => self::Correction,
+            'unclear' => self::UnclearMessage,
         ];
 
         if (array_key_exists($normalized, $aliases)) {

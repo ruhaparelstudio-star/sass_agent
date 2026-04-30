@@ -68,11 +68,19 @@ class WaOutboundService
 
         $outbound = null;
         if (! empty($data['provider_message_id'])) {
-            $outbound = WaOutboundMessage::query()->firstOrNew([
-                'tenant_id' => $tenant->id,
-                'provider' => $data['provider'],
-                'provider_message_id' => $data['provider_message_id'],
-            ]);
+            $existing = WaOutboundMessage::query()
+                ->where('tenant_id', $tenant->id)
+                ->where('provider', $data['provider'])
+                ->where('provider_message_id', $data['provider_message_id'])
+                ->first();
+
+            // Idempotent replay: keep first write and avoid duplicate dispatch side effects.
+            if ($existing) {
+                return $existing->refresh();
+            }
+
+            $outbound = new WaOutboundMessage();
+            $outbound->tenant_id = $tenant->id;
         } else {
             $outbound = new WaOutboundMessage();
             $outbound->tenant_id = $tenant->id;
