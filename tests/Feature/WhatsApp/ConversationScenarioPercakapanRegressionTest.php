@@ -334,6 +334,128 @@ class ConversationScenarioPercakapanRegressionTest extends TestCase
         $this->assertSame([], $failures, $message);
     }
 
+    public function test_booking_dispatch_failure_never_claims_link_or_file_was_sent_in_reply(): void
+    {
+        Queue::fake();
+        $this->bindFeatureGateAlwaysOn();
+        $this->bindCalendarAsAvailable();
+        $this->bindLlmJsonSequence([
+            '{"intent":"ask_pricelist","confidence":0.95,"entities":{}}',
+            '{"intent":"provide_name","confidence":0.97,"entities":{"customer_name":"Aris Egi"}}',
+            '{"intent":"provide_event_type","confidence":0.95,"entities":{"event_type":"wedding"}}',
+            '{"intent":"booking_intent","confidence":0.96,"entities":{"package_query":"photo dan video","event_date":"2026-07-20"}}',
+        ]);
+
+        $tenant = Tenant::query()->create([
+            'name' => 'Studio Wedding',
+            'slug' => 'studio-wedding-no-booking-link',
+            'is_active' => true,
+        ]);
+
+        $account = WaAccount::query()->create([
+            'tenant_id' => $tenant->id,
+            'provider' => 'meta',
+            'provider_ref' => 'acct-studio-wedding',
+            'phone' => '+628111111111',
+            'status' => 'connected',
+            'last_payload' => ['event' => 'connected'],
+        ]);
+
+        $session = WaSession::query()->create([
+            'tenant_id' => $tenant->id,
+            'wa_account_id' => $account->id,
+            'provider' => 'meta',
+            'provider_ref' => 'sess-studio-wedding',
+            'status' => 'active',
+            'last_payload' => ['event' => 'active'],
+        ]);
+
+        $this->seedKnowledgeAndAssetsWithoutBookingLink($tenant);
+
+        $turns = [
+            'boleh minta pricelistnya',
+            'nama aris egi',
+            'photo graper wedding ka',
+            'aku mau booking paket photo dan video tanggal 2026-07-20',
+        ];
+
+        $orchestrator = app(WaInboundTurnOrchestratorService::class);
+
+        foreach ($turns as $index => $text) {
+            $turn = $index + 1;
+            $inbound = WaInboundMessage::query()->create([
+                'tenant_id' => $tenant->id,
+                'wa_account_id' => $account->id,
+                'wa_session_id' => $session->id,
+                'provider' => 'meta',
+                'provider_message_id' => sprintf('booking-fail-turn-%d', $turn),
+                'from' => '+628111111111',
+                'to' => '+628222222222',
+                'message_type' => 'text',
+                'message_timestamp' => now()->addSeconds($turn),
+                'payload' => [
+                    'message' => [
+                        'conversation' => $text,
+                    ],
+                ],
+                'meta' => [
+                    'scenario' => 'booking_dispatch_failure',
+                    'turn' => $turn,
+                ],
+            ]);
+
+            $orchestrator->process($tenant, $inbound);
+        }
+
+        $conversation = Conversation::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('customer_phone', '628111111111')
+            ->latest('id')
+            ->firstOrFail();
+
+        $bookingActionLog = ActionLog::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->where('action', 'send_booking_link')
+            ->latest('id')
+            ->firstOrFail();
+
+        $this->assertSame('blocked', $bookingActionLog->status);
+        $this->assertSame('booking_link_not_available', $bookingActionLog->reason);
+
+        $turnTrace = DecisionTrace::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->where('trace_key', 'inbound_turn')
+            ->latest('id')
+            ->firstOrFail();
+
+        $decision = (array) ($turnTrace->decision_json ?? []);
+        $dispatchAction = (string) ($decision['trace']['action'] ?? '');
+        $dispatchStatus = (string) ($decision['trace']['status'] ?? '');
+
+        $this->assertSame('booking_intent', $decision['intent'] ?? null);
+        $this->assertSame('send_booking_link', $dispatchAction);
+        $this->assertSame($bookingActionLog->status, $dispatchStatus);
+
+        $reply = mb_strtolower((string) ($turnTrace->final_reply ?? ''));
+        $this->assertStringNotContainsString('link booking sudah saya kirim', $reply);
+        $this->assertStringNotContainsString('pricelist sudah saya kirim', $reply);
+        $this->assertStringNotContainsString('sudah saya kirim', $reply);
+
+        $outboundWithBookingUrl = WaOutboundMessage::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('message_type', 'text')
+            ->get()
+            ->contains(function (WaOutboundMessage $outbound): bool {
+                $text = (string) ($outbound->payload['text'] ?? '');
+
+                return str_contains($text, 'https://booking.example.com/wedding');
+            });
+
+        $this->assertFalse($outboundWithBookingUrl, 'Booking URL must not be outbounded when booking dispatch is blocked.');
+    }
+
     private function bindFeatureGateAlwaysOn(): void
     {
         $this->app->bind(FeatureGateService::class, fn () => new class extends FeatureGateService
@@ -515,6 +637,15 @@ class ConversationScenarioPercakapanRegressionTest extends TestCase
             'active_from' => now()->subDay(),
             'active_until' => now()->addDay(),
         ]);
+    }
+
+    private function seedKnowledgeAndAssetsWithoutBookingLink(Tenant $tenant): void
+    {
+        $this->seedKnowledgeAndAssets($tenant);
+
+        BookingSetting::query()
+            ->where('tenant_id', $tenant->id)
+            ->delete();
     }
 
     /**

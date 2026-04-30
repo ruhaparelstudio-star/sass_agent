@@ -662,7 +662,10 @@ class TurnPipelineService
         foreach ($candidateKeys as $key) {
             $match = $lookup[$key] ?? null;
             if (! is_array($match)) {
-                continue;
+                $match = $this->findPackageLookupByRelaxedKey($lookup, $key);
+                if (! is_array($match)) {
+                    continue;
+                }
             }
 
             $packageName = trim((string) ($match['package_name'] ?? ''));
@@ -676,6 +679,64 @@ class TurnPipelineService
         }
 
         return null;
+    }
+
+    /**
+     * @param  array<string,mixed>  $lookup
+     * @return array<string,mixed>|null
+     */
+    private function findPackageLookupByRelaxedKey(array $lookup, string $candidateKey): ?array
+    {
+        $normalizedCandidate = $this->normalizeLookupComparisonText($candidateKey);
+        if ($normalizedCandidate === '') {
+            return null;
+        }
+
+        foreach ($lookup as $lookupKey => $match) {
+            if (! is_string($lookupKey) || ! is_array($match)) {
+                continue;
+            }
+
+            $normalizedLookupKey = $this->normalizeLookupComparisonText($lookupKey);
+            if ($normalizedLookupKey === '') {
+                continue;
+            }
+
+            if ($normalizedLookupKey === $normalizedCandidate) {
+                return $match;
+            }
+
+            if (str_contains($normalizedCandidate, $normalizedLookupKey) || str_contains($normalizedLookupKey, $normalizedCandidate)) {
+                return $match;
+            }
+        }
+
+        return null;
+    }
+
+    private function normalizeLookupComparisonText(string $value): string
+    {
+        $normalized = mb_strtolower(trim($value));
+        if ($normalized === '') {
+            return '';
+        }
+
+        $normalized = preg_replace('/[^a-z0-9\s]/u', ' ', $normalized);
+        if (! is_string($normalized)) {
+            return '';
+        }
+
+        $normalized = preg_replace('/\s+/u', ' ', trim($normalized));
+        if (! is_string($normalized) || $normalized === '') {
+            return '';
+        }
+
+        $tokens = explode(' ', $normalized);
+        while ($tokens !== [] && in_array(end($tokens), ['ka', 'kak', 'kakak', 'dong', 'ya', 'yah'], true)) {
+            array_pop($tokens);
+        }
+
+        return implode(' ', $tokens);
     }
 
     /**
