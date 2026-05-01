@@ -36,10 +36,10 @@ class TenantDashboardQueryService
     {
         $scores = LeadScore::query()
             ->whereHas('leadProfile', fn ($q) => $q->where('tenant_id', $tenantId))
-            ->get(['lead_temperature']);
+            ->get(['score_label']);
         $tempCounts = ['hot' => 0, 'warm' => 0, 'cold' => 0];
         foreach ($scores as $score) {
-            $t = $score->lead_temperature ?? 'cold';
+            $t = $score->score_label ?? 'cold';
             if (isset($tempCounts[$t])) {
                 $tempCounts[$t]++;
             }

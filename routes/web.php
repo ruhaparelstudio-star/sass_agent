@@ -10,6 +10,7 @@ use App\Modules\AdminUi\Http\Controllers\TenantNotificationsController;
 use App\Modules\AdminUi\Http\Controllers\TenantBusinessDataController;
 use App\Modules\AdminUi\Http\Controllers\TenantDashboardController;
 use App\Modules\AdminUi\Http\Controllers\TenantConversationInboxController;
+use App\Modules\AdminUi\Http\Controllers\TenantCalendarController;
 use App\Modules\AdminUi\Http\Controllers\TenantWhatsappQrController;
 use App\Modules\Activation\Http\Controllers\ActivationController;
 use App\Modules\AdminUi\Http\Controllers\SuperadminTenantController;
@@ -75,6 +76,7 @@ Route::middleware('auth')->group(function (): void {
     Route::get('/tenant/notifications', [TenantNotificationsController::class, 'show']);
     Route::post('/tenant/notifications/read-all', [TenantNotificationsController::class, 'markAllRead']);
     Route::get('/tenant/inbox', [TenantConversationInboxController::class, 'show']);
+    Route::get('/tenant/inbox/poll', [TenantConversationInboxController::class, 'poll']);
     Route::get('/tenant/whatsapp/qr', [TenantWhatsappQrController::class, 'show']);
     Route::post('/tenant/whatsapp/qr/connect', [TenantWhatsappQrController::class, 'connect']);
     Route::post('/tenant/whatsapp/agents/{waAccount}/disconnect', [TenantWhatsappQrController::class, 'disconnect']);
@@ -86,6 +88,7 @@ Route::middleware('auth')->group(function (): void {
     Route::post('/tenant/inbox/{conversation}/invoices/{invoice}/resend', [TenantConversationInboxController::class, 'resendInvoice']);
     Route::post('/tenant/inbox/{conversation}/takeover', [TenantConversationInboxController::class, 'takeoverConversation']);
     Route::post('/tenant/inbox/{conversation}/close', [TenantConversationInboxController::class, 'closeConversation']);
+    Route::post('/tenant/inbox/{conversation}/resume-ai', [TenantConversationInboxController::class, 'resumeAiDirect']);
 
     Route::get('/tenant/business-data', [TenantBusinessDataController::class, 'show']);
     Route::post('/tenant/business-data/service-catalogs', [TenantBusinessDataController::class, 'storeServiceCatalog']);
@@ -113,6 +116,11 @@ Route::middleware('auth')->group(function (): void {
     Route::post('/tenant/business-data/package-items', [TenantBusinessDataController::class, 'storePackageItem']);
     Route::put('/tenant/business-data/package-items/{packageItem}', [TenantBusinessDataController::class, 'updatePackageItem']);
     Route::delete('/tenant/business-data/package-items/{packageItem}', [TenantBusinessDataController::class, 'destroyPackageItem']);
+
+    Route::get('/tenant/calendar/connect', [TenantCalendarController::class, 'redirectToGoogle']);
+    Route::get('/tenant/calendar/callback', [TenantCalendarController::class, 'handleCallback']);
+    Route::post('/tenant/calendar/disconnect', [TenantCalendarController::class, 'disconnect']);
+    Route::post('/tenant/calendar/toggle', [TenantCalendarController::class, 'toggle']);
 });
 
 Route::get('/health', function () {

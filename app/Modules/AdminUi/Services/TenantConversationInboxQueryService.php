@@ -312,6 +312,84 @@ class TenantConversationInboxQueryService
         ];
     }
 
+    /**
+     * @return array{conversationList:array<int,array<string,mixed>>,newMessages:array<int,array<string,mixed>>,selectedConversation:?array<string,mixed>}
+     */
+    public function getPollData(int $tenantId, ?int $conversationId, int $afterMessageId, string $query = ''): array
+    {
+        $conversationRows = Conversation::query()
+            ->where('tenant_id', $tenantId)
+            ->when($query !== '', fn ($q) => $q->where('customer_phone', 'like', '%'.$query.'%'))
+            ->latest('id')
+            ->limit(20)
+            ->get(['id', 'customer_phone', 'status', 'current_stage', 'agent_mode', 'memory_mode', 'last_message_at', 'created_at']);
+
+        $conversationIds = $conversationRows->pluck('id')->all();
+        $lastMessages = Message::query()
+            ->where('tenant_id', $tenantId)
+            ->whereIn('conversation_id', $conversationIds)
+            ->orderByDesc('id')
+            ->get(['conversation_id', 'content', 'created_at'])
+            ->unique('conversation_id')
+            ->keyBy('conversation_id');
+
+        $conversationList = $conversationRows->map(function (Conversation $conversation) use ($lastMessages): array {
+            $lastMessage = $lastMessages->get($conversation->id);
+
+            return [
+                'id' => $conversation->id,
+                'customer_phone' => $conversation->customer_phone,
+                'status' => $conversation->status,
+                'current_stage' => $conversation->current_stage,
+                'agent_mode' => $conversation->agent_mode,
+                'memory_mode' => $conversation->memory_mode,
+                'last_message_preview' => $lastMessage?->content ? mb_strimwidth($lastMessage->content, 0, 58, '...') : '-',
+                'last_activity_at' => $conversation->last_message_at ?? $lastMessage?->created_at ?? $conversation->created_at,
+            ];
+        })->toArray();
+
+        if ($conversationId === null) {
+            return ['conversationList' => $conversationList, 'newMessages' => [], 'selectedConversation' => null];
+        }
+
+        $newMessages = Message::query()
+            ->where('tenant_id', $tenantId)
+            ->where('conversation_id', $conversationId)
+            ->where('id', '>', $afterMessageId)
+            ->orderBy('id')
+            ->get(['id', 'conversation_id', 'direction', 'message_type', 'body', 'content', 'created_at'])
+            ->map(fn (Message $message): array => [
+                'id' => $message->id,
+                'conversation_id' => $message->conversation_id,
+                'direction' => (string) $message->direction->value,
+                'message_type' => $message->message_type ?? 'text',
+                'body' => $message->body,
+                'content' => $message->content,
+                'trace' => ['id' => null, 'validators' => null, 'blocked_actions' => [], 'fallback_reason' => null],
+                'created_at' => $message->created_at,
+            ])
+            ->toArray();
+
+        $conv = Conversation::query()
+            ->where('tenant_id', $tenantId)
+            ->whereKey($conversationId)
+            ->first(['id', 'customer_phone', 'status', 'current_stage', 'active_goal', 'agent_mode', 'memory_mode']);
+
+        return [
+            'conversationList' => $conversationList,
+            'newMessages' => $newMessages,
+            'selectedConversation' => $conv ? [
+                'id' => $conv->id,
+                'customer_phone' => $conv->customer_phone,
+                'status' => $conv->status,
+                'current_stage' => $conv->current_stage,
+                'active_goal' => $conv->active_goal,
+                'agent_mode' => $conv->agent_mode,
+                'memory_mode' => $conv->memory_mode,
+            ] : null,
+        ];
+    }
+
     private function statusLabel(string $status): string
     {
         return match ($status) {

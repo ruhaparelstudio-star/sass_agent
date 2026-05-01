@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Link, router, useForm, usePage } from '@inertiajs/react'
 import TenantLayout from '../../layouts/TenantLayout'
 import {
@@ -252,10 +252,84 @@ function ContextPanel({ contextPanel, selectedConversation }) {
   )
 }
 
-export default function Inbox({ query, conversationList, selectedConversation, messages, handoffs, contextPanel, invoiceAssets, invoices }) {
+export default function Inbox({
+  query,
+  conversationList: initialConversationList,
+  selectedConversation: initialSelectedConversation,
+  messages: initialMessages,
+  handoffs,
+  contextPanel,
+  invoiceAssets,
+  invoices,
+}) {
   const page = usePage()
   const flash = page?.props?.flash ?? {}
   const [searchQ, setSearchQ] = useState(query ?? '')
+
+  // Local state for realtime updates
+  const [messages, setMessages] = useState(initialMessages ?? [])
+  const [conversationList, setConversationList] = useState(initialConversationList ?? [])
+  const [selectedConversation, setSelectedConversation] = useState(initialSelectedConversation)
+  const chatEndRef = useRef(null)
+  const lastMsgIdRef = useRef(
+    (initialMessages ?? []).length > 0 ? Math.max(...(initialMessages ?? []).map((m) => m.id)) : 0
+  )
+
+  // Sync from Inertia when conversation changes (navigation)
+  useEffect(() => {
+    setMessages(initialMessages ?? [])
+    setSelectedConversation(initialSelectedConversation)
+    lastMsgIdRef.current =
+      (initialMessages ?? []).length > 0 ? Math.max(...(initialMessages ?? []).map((m) => m.id)) : 0
+  }, [initialSelectedConversation?.id])
+
+  // Sync conversation list from Inertia (after search/actions)
+  useEffect(() => {
+    setConversationList(initialConversationList ?? [])
+  }, [initialConversationList])
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages.length])
+
+  // Polling for new messages
+  useEffect(() => {
+    const convId = initialSelectedConversation?.id
+
+    const poll = async () => {
+      try {
+        const params = new URLSearchParams({ after_message_id: String(lastMsgIdRef.current) })
+        if (convId) params.set('conversation_id', String(convId))
+        if (query) params.set('q', query)
+
+        const res = await fetch(`/tenant/inbox/poll?${params}`, {
+          headers: { 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json' },
+        })
+        if (!res.ok) return
+        const data = await res.json()
+
+        if (data.newMessages?.length > 0) {
+          setMessages((prev) => [...prev, ...data.newMessages])
+          lastMsgIdRef.current = data.newMessages[data.newMessages.length - 1].id
+        }
+
+        if (data.conversationList?.length > 0) {
+          setConversationList(data.conversationList)
+        }
+
+        if (data.selectedConversation) {
+          setSelectedConversation((prev) => (prev ? { ...prev, ...data.selectedConversation } : prev))
+        }
+      } catch {
+        // silent — poll will retry next interval
+      }
+    }
+
+    const intervalId = setInterval(poll, 5000)
+    return () => clearInterval(intervalId)
+  }, [initialSelectedConversation?.id])
+
   const invoiceForm = useForm({ tenant_asset_id: invoiceAssets?.[0]?.id ? String(invoiceAssets[0].id) : '' })
 
   const submitInvoice = (event) => {
@@ -350,7 +424,7 @@ export default function Inbox({ query, conversationList, selectedConversation, m
                   {canResumeFromConv && (
                     <button
                       type="button"
-                      onClick={() => router.post(`/tenant/inbox/${selectedConversation.id}/handoff/${handoffs?.[0]?.id}/resume`)}
+                      onClick={() => router.post(`/tenant/inbox/${selectedConversation.id}/resume-ai`)}
                       className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
                     >
                       <Bot className="h-3.5 w-3.5" /> Aktifkan AI
@@ -369,7 +443,7 @@ export default function Inbox({ query, conversationList, selectedConversation, m
               </div>
 
               <div className="min-h-64 flex-1 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-4">
-                {(messages ?? []).length === 0 ? (
+                {messages.length === 0 ? (
                   <div className="flex h-40 items-center justify-center text-sm text-slate-400">
                     <div className="text-center">
                       <MessagesSquare className="mx-auto mb-2 h-8 w-8 opacity-30" />
@@ -378,9 +452,10 @@ export default function Inbox({ query, conversationList, selectedConversation, m
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {(messages ?? []).map((msg) => (
+                    {messages.map((msg) => (
                       <ChatBubble key={msg.id} message={msg} />
                     ))}
+                    <div ref={chatEndRef} />
                   </div>
                 )}
               </div>

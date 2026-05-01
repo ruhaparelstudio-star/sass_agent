@@ -15,6 +15,7 @@ use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
 use Symfony\Component\HttpKernel\Exception\HttpException;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\ValidationException;
 
 class TenantConversationInboxController extends Controller
@@ -56,6 +57,23 @@ class TenantConversationInboxController extends Controller
             'invoiceAssets' => $inboxData['invoiceAssets'],
             'invoices' => $inboxData['invoices'],
         ]);
+    }
+
+    public function poll(Request $request): JsonResponse
+    {
+        $tenantId = $this->resolveAuthorizedTenantId($request);
+        $conversationId = $request->query('conversation_id');
+        $afterMessageId = (int) $request->query('after_message_id', 0);
+        $query = trim((string) $request->query('q', ''));
+
+        $data = $this->inboxQueryService->getPollData(
+            $tenantId,
+            $conversationId !== null ? (int) $conversationId : null,
+            $afterMessageId,
+            $query,
+        );
+
+        return response()->json($data);
     }
 
     public function storeInvoice(Request $request, int $conversation): RedirectResponse
@@ -151,6 +169,23 @@ class TenantConversationInboxController extends Controller
 
         return redirect('/tenant/inbox?conversation_id='.$conversationRow->id)
             ->with('success', 'Invoice berhasil dikirim ulang. ('.(++$sendCount).'/'.$maxSendCount.')');
+    }
+
+    public function resumeAiDirect(Request $request, int $conversation): RedirectResponse
+    {
+        $tenantId = $this->resolveAuthorizedTenantId($request);
+        $conversationRow = Conversation::query()->findOrFail($conversation);
+        if ((int) $conversationRow->tenant_id !== $tenantId) {
+            throw new HttpException(403, 'Forbidden tenant scope.');
+        }
+
+        $conversationRow->update(['agent_mode' => 'active']);
+        if ($conversationRow->state) {
+            $conversationRow->state->update(['agent_mode' => 'active']);
+        }
+
+        return redirect('/tenant/inbox?conversation_id='.$conversationRow->id)
+            ->with('success', 'AI diaktifkan kembali.');
     }
 
     public function resolveHandoff(Request $request, int $conversation, int $handoff): RedirectResponse

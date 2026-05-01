@@ -57,11 +57,14 @@ class TurnPipelineService
 
         $updatedGoal = $this->goalFromIntent($finalIntent);
         if ($updatedGoal !== null && $updatedGoal !== $state->active_goal) {
-            $state->active_goal = $updatedGoal;
-            $state->save();
-            $conversation->forceFill([
-                'active_goal' => $state->active_goal,
-            ])->save();
+            // Never regress from booking to qualification — providing data mid-booking doesn't cancel intent
+            if (! ($state->active_goal === 'booking' && $updatedGoal === 'qualification')) {
+                $state->active_goal = $updatedGoal;
+                $state->save();
+                $conversation->forceFill([
+                    'active_goal' => $state->active_goal,
+                ])->save();
+            }
         }
 
         $leadProfile = LeadProfile::query()
@@ -378,6 +381,26 @@ class TurnPipelineService
         ?string $activeGoal,
         array $context
     ): Intent {
+        // When user provides booking data (date/name/event type/preference) while in booking goal,
+        // treat as continuing the booking flow rather than reverting to qualification.
+        $bookingDataIntents = [
+            Intent::ProvideDate,
+            Intent::ProvideName,
+            Intent::ProvideEventType,
+            Intent::ProvidePreference,
+        ];
+        if (in_array($intent, $bookingDataIntents, true)) {
+            $normalizedGoal = strtolower(trim((string) $activeGoal));
+            if ($normalizedGoal === 'booking') {
+                $previousBlockedAction = $context['previous_blocked_action'] ?? null;
+                if (is_array($previousBlockedAction)
+                    && ($previousBlockedAction['action'] ?? null) === 'send_booking_link'
+                ) {
+                    return Intent::BookingIntent;
+                }
+            }
+        }
+
         if ($intent !== Intent::AskPackage) {
             return $intent;
         }
@@ -1209,6 +1232,18 @@ class TurnPipelineService
                 ];
             }
 
+            // Handoff jika kalender belum dikonfigurasi saat user ingin booking
+            if (is_array($calendarCheck)
+                && ($calendarCheck['checked'] ?? false) === false
+                && in_array($calendarCheck['reason'] ?? null, ['calendar_integration_disabled'], true)
+            ) {
+                return [
+                    'required' => true,
+                    'reason_code' => 'calendar_unavailable',
+                    'priority' => 'high',
+                ];
+            }
+
             $blocked = $candidates['blocked'] ?? [];
             $blockedReasons = is_array($blocked) && is_array($blocked[0]['reasons'] ?? null)
                 ? $blocked[0]['reasons']
@@ -1261,6 +1296,18 @@ class TurnPipelineService
         if (is_array($calendarCheck)
             && (($calendarCheck['checked'] ?? false) === true)
             && (($calendarCheck['available'] ?? false) === false)
+        ) {
+            return [
+                'required' => true,
+                'reason_code' => 'calendar_unavailable',
+                'priority' => 'high',
+            ];
+        }
+
+        // Handoff jika kalender belum dikonfigurasi admin
+        if (is_array($calendarCheck)
+            && ($calendarCheck['checked'] ?? false) === false
+            && in_array($calendarCheck['reason'] ?? null, ['calendar_integration_disabled'], true)
         ) {
             return [
                 'required' => true,

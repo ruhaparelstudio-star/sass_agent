@@ -9,6 +9,7 @@ use App\Models\Price;
 use App\Models\Product;
 use App\Models\ServiceCatalog;
 use App\Models\BookingSetting;
+use App\Models\CalendarConnection;
 use App\Models\CalendarSetting;
 
 class TenantBusinessDataQueryService
@@ -69,6 +70,40 @@ class TenantBusinessDataQueryService
                 ->get(['id', 'tenant_id', 'booking_url', 'sort_order', 'is_active', 'active_from', 'active_until'])
                 ->toArray(),
             'businessHoursPolicy' => $businessHours,
+            'calendarConnection' => $this->resolveCalendarConnection($tenantId),
+            'googleCalendarEnabled' => (string) config('services.google.calendar.client_id', '') !== '',
+        ];
+    }
+
+    /**
+     * @return array{status:string,is_enabled:bool,email:?string,calendar_id:string}
+     */
+    private function resolveCalendarConnection(int $tenantId): array
+    {
+        $conn = CalendarConnection::query()
+            ->where('tenant_id', $tenantId)
+            ->where('provider', 'google')
+            ->latest()
+            ->first();
+
+        if (! $conn) {
+            return [
+                'status'      => 'disconnected',
+                'is_enabled'  => false,
+                'email'       => null,
+                'calendar_id' => 'primary',
+            ];
+        }
+
+        $config = is_array($conn->config) ? $conn->config : [];
+
+        return [
+            'status'      => (string) $conn->status,
+            'is_enabled'  => (bool) $conn->is_enabled,
+            'email'       => is_string($config['email'] ?? null) ? $config['email'] : null,
+            'calendar_id' => is_string($config['calendar_id'] ?? null) && $config['calendar_id'] !== ''
+                ? $config['calendar_id']
+                : 'primary',
         ];
     }
 
