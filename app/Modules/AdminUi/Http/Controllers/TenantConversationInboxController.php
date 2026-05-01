@@ -15,6 +15,7 @@ use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
 use Symfony\Component\HttpKernel\Exception\HttpException;
+use Illuminate\Validation\ValidationException;
 
 class TenantConversationInboxController extends Controller
 {
@@ -86,6 +87,70 @@ class TenantConversationInboxController extends Controller
 
         return redirect('/tenant/inbox?conversation_id='.$conversationRow->id)
             ->with('success', 'Invoice untuk lead berhasil dibuat.');
+    }
+
+    public function takeoverConversation(Request $request, int $conversation): RedirectResponse
+    {
+        $tenantId = $this->resolveAuthorizedTenantId($request);
+        $conversationRow = Conversation::query()->findOrFail($conversation);
+        if ((int) $conversationRow->tenant_id !== $tenantId) {
+            throw new HttpException(403, 'Forbidden tenant scope.');
+        }
+
+        $conversationRow->update(['agent_mode' => 'paused']);
+        if ($conversationRow->state) {
+            $conversationRow->state->update(['agent_mode' => 'paused']);
+        }
+
+        return redirect('/tenant/inbox?conversation_id='.$conversationRow->id)
+            ->with('success', 'AI dijeda. Percakapan diambil alih oleh admin.');
+    }
+
+    public function closeConversation(Request $request, int $conversation): RedirectResponse
+    {
+        $tenantId = $this->resolveAuthorizedTenantId($request);
+        $conversationRow = Conversation::query()->findOrFail($conversation);
+        if ((int) $conversationRow->tenant_id !== $tenantId) {
+            throw new HttpException(403, 'Forbidden tenant scope.');
+        }
+
+        $conversationRow->update(['status' => 'closed', 'agent_mode' => 'paused']);
+        if ($conversationRow->state) {
+            $conversationRow->state->update(['agent_mode' => 'paused']);
+        }
+
+        return redirect('/tenant/inbox?conversation_id='.$conversationRow->id)
+            ->with('success', 'Percakapan berhasil ditutup.');
+    }
+
+    public function resendInvoice(Request $request, int $conversation, int $invoice): RedirectResponse
+    {
+        $tenantId = $this->resolveAuthorizedTenantId($request);
+        $conversationRow = Conversation::query()->findOrFail($conversation);
+        if ((int) $conversationRow->tenant_id !== $tenantId) {
+            throw new HttpException(403, 'Forbidden tenant scope.');
+        }
+
+        $invoiceRow = Invoice::query()->findOrFail($invoice);
+        if ((int) $invoiceRow->tenant_id !== $tenantId || (int) $invoiceRow->conversation_id !== $conversation) {
+            throw new HttpException(403, 'Forbidden tenant scope.');
+        }
+
+        $sendCount = $invoiceRow->send_count ?? 0;
+        $maxSendCount = $invoiceRow->max_send_count ?? 3;
+        if ($sendCount >= $maxSendCount) {
+            return redirect('/tenant/inbox?conversation_id='.$conversationRow->id)
+                ->with('error', 'Batas pengiriman ulang invoice telah tercapai ('.$maxSendCount.'x).');
+        }
+
+        $invoiceRow->update([
+            'send_count' => $sendCount + 1,
+            'last_sent_at' => now(),
+            'status' => 'sent',
+        ]);
+
+        return redirect('/tenant/inbox?conversation_id='.$conversationRow->id)
+            ->with('success', 'Invoice berhasil dikirim ulang. ('.(++$sendCount).'/'.$maxSendCount.')');
     }
 
     public function resolveHandoff(Request $request, int $conversation, int $handoff): RedirectResponse

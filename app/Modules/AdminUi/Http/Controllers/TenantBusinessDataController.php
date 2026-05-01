@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Discount;
 use App\Models\Faq;
 use App\Models\Package;
+use App\Models\PackageItem;
 use App\Models\Price;
 use App\Models\Product;
 use App\Models\ServiceCatalog;
@@ -36,10 +37,20 @@ class TenantBusinessDataController extends Controller
     public function show(Request $request): Response
     {
         $tenantId = $this->resolveAuthorizedTenantId($request);
+        $pageData = $this->queryService->getPageData($tenantId);
+
+        $packageItems = PackageItem::query()
+            ->where('tenant_id', $tenantId)
+            ->where('is_active', true)
+            ->orderBy('package_id')
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get(['id', 'package_id', 'name', 'description', 'sort_order', 'is_active'])
+            ->toArray();
 
         return Inertia::render('Tenant/BusinessData', [
             'tenantId' => $tenantId,
-            'data' => $this->queryService->getPageData($tenantId),
+            'data' => array_merge($pageData, ['packageItems' => $packageItems]),
             'assets' => TenantAsset::query()
                 ->where('tenant_id', $tenantId)
                 ->orderByDesc('id')
@@ -286,6 +297,59 @@ class TenantBusinessDataController extends Controller
         $this->commandService->upsertBusinessHoursPolicy($tenantId, $payload);
 
         return back()->with('success', 'Business hours updated.');
+    }
+
+    public function storePackageItem(Request $request): RedirectResponse
+    {
+        $tenantId = $this->resolveAuthorizedTenantId($request);
+        $payload = $request->validate([
+            'package_id' => ['required', 'integer', 'exists:packages,id'],
+            'name' => ['required', 'string', 'max:255'],
+            'description' => ['nullable', 'string'],
+            'sort_order' => ['nullable', 'integer', 'min:0'],
+        ]);
+
+        $package = Package::query()->findOrFail((int) $payload['package_id']);
+        if ((int) $package->tenant_id !== $tenantId) {
+            throw new HttpException(403, 'Forbidden tenant scope.');
+        }
+
+        PackageItem::query()->create(array_merge($payload, [
+            'tenant_id' => $tenantId,
+            'is_active' => true,
+        ]));
+
+        return back()->with('success', 'Item paket berhasil ditambahkan.');
+    }
+
+    public function updatePackageItem(Request $request, PackageItem $packageItem): RedirectResponse
+    {
+        $tenantId = $this->resolveAuthorizedTenantId($request);
+        if ((int) $packageItem->tenant_id !== $tenantId) {
+            throw new HttpException(403, 'Forbidden tenant scope.');
+        }
+
+        $payload = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'description' => ['nullable', 'string'],
+            'sort_order' => ['nullable', 'integer', 'min:0'],
+        ]);
+
+        $packageItem->update($payload);
+
+        return back()->with('success', 'Item paket berhasil diperbarui.');
+    }
+
+    public function destroyPackageItem(Request $request, PackageItem $packageItem): RedirectResponse
+    {
+        $tenantId = $this->resolveAuthorizedTenantId($request);
+        if ((int) $packageItem->tenant_id !== $tenantId) {
+            throw new HttpException(403, 'Forbidden tenant scope.');
+        }
+
+        $packageItem->update(['is_active' => false]);
+
+        return back()->with('success', 'Item paket berhasil dihapus.');
     }
 
     private function serviceCatalogRules(int $tenantId, ?int $ignoreId = null, bool $requireCode = true): array

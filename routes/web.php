@@ -4,6 +4,9 @@ use App\Enums\UserRole;
 use App\Modules\AdminUi\Http\Controllers\SuperadminPlanManagementController;
 use App\Modules\AdminUi\Http\Controllers\SuperadminConversationMonitoringController;
 use App\Modules\AdminUi\Http\Controllers\SuperadminDataMonitoringController;
+use App\Modules\AdminUi\Http\Controllers\TenantAnalyticsController;
+use App\Modules\AdminUi\Http\Controllers\TenantAiConfigController;
+use App\Modules\AdminUi\Http\Controllers\TenantNotificationsController;
 use App\Modules\AdminUi\Http\Controllers\TenantBusinessDataController;
 use App\Modules\AdminUi\Http\Controllers\TenantDashboardController;
 use App\Modules\AdminUi\Http\Controllers\TenantConversationInboxController;
@@ -48,6 +51,7 @@ Route::middleware('auth')->group(function (): void {
     Route::put('/superadmin/tenants/{tenant}', [SuperadminTenantController::class, 'update']);
     Route::patch('/superadmin/tenants/{tenant}', [SuperadminTenantController::class, 'update']);
     Route::post('/superadmin/tenants/{tenant}/deactivate', [SuperadminTenantController::class, 'deactivate']);
+    Route::post('/superadmin/tenants/{tenant}/activate', [SuperadminTenantController::class, 'activate']);
 
     Route::get('/superadmin/plans', [SuperadminPlanManagementController::class, 'index']);
     Route::get('/superadmin/conversations', [SuperadminConversationMonitoringController::class, 'index']);
@@ -65,6 +69,11 @@ Route::middleware('auth')->group(function (): void {
     Route::post('/superadmin/subscriptions/unassign', [SuperadminPlanManagementController::class, 'unassignSubscription']);
 
     Route::get('/tenant/dashboard', [TenantDashboardController::class, 'show']);
+    Route::get('/tenant/analytics', [TenantAnalyticsController::class, 'show']);
+    Route::get('/tenant/ai-config', [TenantAiConfigController::class, 'show']);
+    Route::post('/tenant/ai-config', [TenantAiConfigController::class, 'store']);
+    Route::get('/tenant/notifications', [TenantNotificationsController::class, 'show']);
+    Route::post('/tenant/notifications/read-all', [TenantNotificationsController::class, 'markAllRead']);
     Route::get('/tenant/inbox', [TenantConversationInboxController::class, 'show']);
     Route::get('/tenant/whatsapp/qr', [TenantWhatsappQrController::class, 'show']);
     Route::post('/tenant/whatsapp/qr/connect', [TenantWhatsappQrController::class, 'connect']);
@@ -74,6 +83,9 @@ Route::middleware('auth')->group(function (): void {
     Route::post('/tenant/inbox/{conversation}/handoff/{handoff}/resolve', [TenantConversationInboxController::class, 'resolveHandoff']);
     Route::post('/tenant/inbox/{conversation}/handoff/{handoff}/resume', [TenantConversationInboxController::class, 'resumeAi']);
     Route::post('/tenant/inbox/{conversation}/invoices', [TenantConversationInboxController::class, 'storeInvoice']);
+    Route::post('/tenant/inbox/{conversation}/invoices/{invoice}/resend', [TenantConversationInboxController::class, 'resendInvoice']);
+    Route::post('/tenant/inbox/{conversation}/takeover', [TenantConversationInboxController::class, 'takeoverConversation']);
+    Route::post('/tenant/inbox/{conversation}/close', [TenantConversationInboxController::class, 'closeConversation']);
 
     Route::get('/tenant/business-data', [TenantBusinessDataController::class, 'show']);
     Route::post('/tenant/business-data/service-catalogs', [TenantBusinessDataController::class, 'storeServiceCatalog']);
@@ -98,6 +110,9 @@ Route::middleware('auth')->group(function (): void {
     Route::post('/tenant/business-data/business-hours', [TenantBusinessDataController::class, 'upsertBusinessHours']);
     Route::post('/tenant/business-data/assets/pricelist', [TenantBusinessDataController::class, 'uploadPricelistAsset']);
     Route::post('/tenant/business-data/assets/invoice', [TenantBusinessDataController::class, 'uploadInvoiceAsset']);
+    Route::post('/tenant/business-data/package-items', [TenantBusinessDataController::class, 'storePackageItem']);
+    Route::put('/tenant/business-data/package-items/{packageItem}', [TenantBusinessDataController::class, 'updatePackageItem']);
+    Route::delete('/tenant/business-data/package-items/{packageItem}', [TenantBusinessDataController::class, 'destroyPackageItem']);
 });
 
 Route::get('/health', function () {
