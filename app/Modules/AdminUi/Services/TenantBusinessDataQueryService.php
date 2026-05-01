@@ -70,8 +70,8 @@ class TenantBusinessDataQueryService
                 ->get(['id', 'tenant_id', 'booking_url', 'sort_order', 'is_active', 'active_from', 'active_until'])
                 ->toArray(),
             'businessHoursPolicy' => $businessHours,
-            'calendarConnection' => $this->resolveCalendarConnection($tenantId),
-            'googleCalendarEnabled' => (string) config('services.google.calendar.client_id', '') !== '',
+            'calendarConnection'  => $this->resolveCalendarConnection($tenantId),
+            'calendarCredentials' => $this->resolveCalendarCredentials($tenantId),
         ];
     }
 
@@ -104,6 +104,23 @@ class TenantBusinessDataQueryService
             'calendar_id' => is_string($config['calendar_id'] ?? null) && $config['calendar_id'] !== ''
                 ? $config['calendar_id']
                 : 'primary',
+        ];
+    }
+
+    private function resolveCalendarCredentials(int $tenantId): array
+    {
+        $setting   = CalendarSetting::query()->where('tenant_id', $tenantId)->first();
+        $rules     = is_array($setting?->rules) ? $setting->rules : [];
+        $googleCfg = is_array($rules['google_calendar'] ?? null) ? $rules['google_calendar'] : [];
+
+        $clientId  = (string) ($googleCfg['client_id'] ?? '');
+        $secretSet = isset($googleCfg['client_secret_encrypted']) && $googleCfg['client_secret_encrypted'] !== '';
+
+        return [
+            'client_id'           => $clientId,
+            'client_secret_set'   => $secretSet,
+            'max_events_per_date' => (int) ($googleCfg['max_events_per_date'] ?? 1),
+            'credentials_ready'   => $clientId !== '' && $secretSet,
         ];
     }
 

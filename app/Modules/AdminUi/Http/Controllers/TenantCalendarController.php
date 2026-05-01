@@ -5,30 +5,68 @@ namespace App\Modules\AdminUi\Http\Controllers;
 use App\Enums\UserRole;
 use App\Http\Controllers\Controller;
 use App\Models\CalendarConnection;
+use App\Models\CalendarSetting;
 use App\Modules\Calendar\Services\GoogleCalendarOAuthService;
 use App\Modules\Tenancy\Services\TenantContextResolver;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Crypt;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class TenantCalendarController extends Controller
 {
     public function __construct(
         private readonly TenantContextResolver $tenantContextResolver,
-        private readonly GoogleCalendarOAuthService $oauthService,
     ) {}
+
+    public function saveCredentials(Request $request): RedirectResponse
+    {
+        $tenantId = $this->resolveAuthorizedTenantId($request);
+
+        $payload = $request->validate([
+            'client_id'           => ['required', 'string', 'max:255'],
+            'client_secret'       => ['nullable', 'string', 'max:255'],
+            'max_events_per_date' => ['required', 'integer', 'min:1', 'max:50'],
+        ]);
+
+        $setting = CalendarSetting::query()
+            ->firstOrCreate(
+                ['tenant_id' => $tenantId],
+                ['timezone' => 'Asia/Jakarta', 'rules' => []]
+            );
+
+        $rules     = is_array($setting->rules) ? $setting->rules : [];
+        $googleCfg = is_array($rules['google_calendar'] ?? null) ? $rules['google_calendar'] : [];
+
+        $googleCfg['client_id']           = $payload['client_id'];
+        $googleCfg['max_events_per_date'] = (int) $payload['max_events_per_date'];
+
+        if (! empty($payload['client_secret'])) {
+            $googleCfg['client_secret_encrypted'] = Crypt::encryptString($payload['client_secret']);
+        }
+
+        $rules['google_calendar'] = $googleCfg;
+        $setting->rules           = $rules;
+        $setting->save();
+
+        return redirect('/tenant/business-data?step=calendar')
+            ->with('success', 'Konfigurasi Google Calendar berhasil disimpan.');
+    }
 
     public function redirectToGoogle(Request $request): RedirectResponse
     {
-        $this->resolveAuthorizedTenantId($request);
+        $tenantId = $this->resolveAuthorizedTenantId($request);
 
-        $clientId = (string) config('services.google.calendar.client_id', '');
-        if ($clientId === '') {
+        [$clientId, $clientSecret] = $this->resolveTenantGoogleCredentials($tenantId);
+
+        if ($clientId === '' || $clientSecret === '') {
             return redirect('/tenant/business-data?step=calendar')
-                ->with('error', 'Google Calendar belum dikonfigurasi oleh administrator sistem.');
+                ->with('error', 'Simpan Google Client ID dan Secret terlebih dahulu sebelum menghubungkan.');
         }
 
-        return redirect($this->oauthService->getAuthorizationUrl());
+        $oauthService = $this->makeOAuthService($clientId, $clientSecret);
+
+        return redirect($oauthService->getAuthorizationUrl());
     }
 
     public function handleCallback(Request $request): RedirectResponse
@@ -47,8 +85,17 @@ class TenantCalendarController extends Controller
                 ->with('error', 'Kode otorisasi tidak diterima dari Google.');
         }
 
+        [$clientId, $clientSecret] = $this->resolveTenantGoogleCredentials($tenantId);
+
+        if ($clientId === '' || $clientSecret === '') {
+            return redirect('/tenant/business-data?step=calendar')
+                ->with('error', 'Konfigurasi Google belum tersimpan. Simpan Client ID dan Secret terlebih dahulu.');
+        }
+
+        $oauthService = $this->makeOAuthService($clientId, $clientSecret);
+
         try {
-            $tokens = $this->oauthService->exchangeCodeForTokens($code);
+            $tokens = $oauthService->exchangeCodeForTokens($code);
         } catch (\Throwable $e) {
             return redirect('/tenant/business-data?step=calendar')
                 ->with('error', 'Gagal menghubungkan Google Calendar: '.$e->getMessage());
@@ -115,6 +162,42 @@ class TenantCalendarController extends Controller
 
         return redirect('/tenant/business-data?step=calendar')
             ->with('success', "Google Calendar berhasil {$label}.");
+    }
+
+    /**
+     * Resolve per-tenant Google OAuth credentials from CalendarSetting.
+     *
+     * @return array{0:string,1:string}  [clientId, clientSecret]
+     */
+    private function resolveTenantGoogleCredentials(int $tenantId): array
+    {
+        $setting = CalendarSetting::query()->where('tenant_id', $tenantId)->first();
+        $rules   = is_array($setting?->rules) ? $setting->rules : [];
+        $cfg     = is_array($rules['google_calendar'] ?? null) ? $rules['google_calendar'] : [];
+
+        $clientId        = (string) ($cfg['client_id'] ?? '');
+        $secretEncrypted = (string) ($cfg['client_secret_encrypted'] ?? '');
+
+        if ($clientId === '' || $secretEncrypted === '') {
+            return ['', ''];
+        }
+
+        try {
+            $clientSecret = Crypt::decryptString($secretEncrypted);
+        } catch (\Throwable) {
+            return [$clientId, ''];
+        }
+
+        return [$clientId, $clientSecret];
+    }
+
+    private function makeOAuthService(string $clientId, string $clientSecret): GoogleCalendarOAuthService
+    {
+        return new GoogleCalendarOAuthService(
+            $clientId,
+            $clientSecret,
+            rtrim((string) config('app.url'), '/').'/tenant/calendar/callback',
+        );
     }
 
     private function resolveAuthorizedTenantId(Request $request): int

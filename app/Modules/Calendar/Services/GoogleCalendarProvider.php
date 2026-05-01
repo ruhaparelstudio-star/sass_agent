@@ -3,12 +3,12 @@
 namespace App\Modules\Calendar\Services;
 
 use App\Models\CalendarConnection;
+use App\Models\CalendarSetting;
 use App\Modules\Calendar\Contracts\CalendarAvailabilityProvider;
+use Illuminate\Support\Facades\Crypt;
 
 class GoogleCalendarProvider implements CalendarAvailabilityProvider
 {
-    public function __construct(private readonly GoogleCalendarOAuthService $oauthService) {}
-
     /**
      * @param  array<string,mixed>  $request
      * @return array{status:string,checked:bool,available:bool,reason:?string,source:string,meta?:array<string,mixed>}
@@ -25,16 +25,54 @@ class GoogleCalendarProvider implements CalendarAvailabilityProvider
 
         if (! $connection) {
             return [
-                'status'  => 'blocked',
-                'checked' => false,
+                'status'    => 'blocked',
+                'checked'   => false,
                 'available' => false,
-                'reason'  => 'calendar_integration_disabled',
-                'source'  => 'google_provider',
+                'reason'    => 'calendar_integration_disabled',
+                'source'    => 'google_provider',
+            ];
+        }
+
+        $setting   = CalendarSetting::query()->where('tenant_id', $tenantId)->first();
+        $rules     = is_array($setting?->rules) ? $setting->rules : [];
+        $googleCfg = is_array($rules['google_calendar'] ?? null) ? $rules['google_calendar'] : [];
+
+        $clientId        = (string) ($googleCfg['client_id'] ?? '');
+        $secretEncrypted = (string) ($googleCfg['client_secret_encrypted'] ?? '');
+
+        if ($clientId === '' || $secretEncrypted === '') {
+            return [
+                'status'    => 'blocked',
+                'checked'   => false,
+                'available' => false,
+                'reason'    => 'calendar_integration_disabled',
+                'source'    => 'google_provider',
             ];
         }
 
         try {
-            $config = $this->ensureFreshToken($connection);
+            $clientSecret = Crypt::decryptString($secretEncrypted);
+        } catch (\Throwable) {
+            return [
+                'status'    => 'blocked',
+                'checked'   => true,
+                'available' => false,
+                'reason'    => 'calendar_provider_error',
+                'source'    => 'google_provider',
+                'meta'      => ['error' => 'Failed to decrypt client secret.'],
+            ];
+        }
+
+        $maxEvents    = max(1, (int) ($googleCfg['max_events_per_date'] ?? 1));
+        $timezone     = (string) ($setting?->timezone ?? 'Asia/Jakarta');
+        $oauthService = new GoogleCalendarOAuthService(
+            $clientId,
+            $clientSecret,
+            rtrim((string) config('app.url'), '/').'/tenant/calendar/callback',
+        );
+
+        try {
+            $config = $this->ensureFreshToken($connection, $oauthService);
 
             $calendarId = (string) ($config['calendar_id'] ?? 'primary');
             if ($calendarId === '') {
@@ -45,37 +83,40 @@ class GoogleCalendarProvider implements CalendarAvailabilityProvider
 
             if ($dateIso === null) {
                 return [
-                    'status'  => 'available',
-                    'checked' => true,
+                    'status'    => 'available',
+                    'checked'   => true,
                     'available' => true,
-                    'reason'  => null,
-                    'source'  => 'google_calendar',
-                    'meta'    => ['note' => 'no_date_provided', 'calendar_id' => $calendarId],
+                    'reason'    => null,
+                    'source'    => 'google_calendar',
+                    'meta'      => ['note' => 'no_date_provided', 'calendar_id' => $calendarId],
                 ];
             }
 
-            $available = $this->oauthService->checkFreeBusy($config, $calendarId, $dateIso);
+            $eventCount = $oauthService->countEventsOnDate($config, $calendarId, $dateIso, $timezone);
+            $available  = $eventCount < $maxEvents;
 
             return [
-                'status'  => $available ? 'available' : 'unavailable',
-                'checked' => true,
+                'status'    => $available ? 'available' : 'unavailable',
+                'checked'   => true,
                 'available' => $available,
-                'reason'  => $available ? null : 'date_unavailable',
-                'source'  => 'google_calendar',
-                'meta'    => [
-                    'calendar_id' => $calendarId,
-                    'date'        => $dateIso,
-                    'email'       => $config['email'] ?? null,
+                'reason'    => $available ? null : 'date_unavailable',
+                'source'    => 'google_calendar',
+                'meta'      => [
+                    'calendar_id'  => $calendarId,
+                    'date'         => $dateIso,
+                    'event_count'  => $eventCount,
+                    'max_events'   => $maxEvents,
+                    'email'        => $config['email'] ?? null,
                 ],
             ];
         } catch (\Throwable $e) {
             return [
-                'status'  => 'blocked',
-                'checked' => true,
+                'status'    => 'blocked',
+                'checked'   => true,
                 'available' => false,
-                'reason'  => 'calendar_provider_error',
-                'source'  => 'google_calendar',
-                'meta'    => ['error' => $e->getMessage()],
+                'reason'    => 'calendar_provider_error',
+                'source'    => 'google_calendar',
+                'meta'      => ['error' => $e->getMessage()],
             ];
         }
     }
@@ -85,7 +126,7 @@ class GoogleCalendarProvider implements CalendarAvailabilityProvider
      *
      * @return array<string,mixed>
      */
-    private function ensureFreshToken(CalendarConnection $connection): array
+    private function ensureFreshToken(CalendarConnection $connection, GoogleCalendarOAuthService $oauthService): array
     {
         $config = is_array($connection->config) ? $connection->config : [];
         $expiry = (int) ($config['token_expiry'] ?? 0);
@@ -94,8 +135,8 @@ class GoogleCalendarProvider implements CalendarAvailabilityProvider
             return $config;
         }
 
-        $config = $this->oauthService->refreshAccessToken($config);
-        $connection->config = $config;
+        $config                    = $oauthService->refreshAccessToken($config);
+        $connection->config        = $config;
         $connection->last_checked_at = now();
         $connection->save();
 
@@ -104,6 +145,8 @@ class GoogleCalendarProvider implements CalendarAvailabilityProvider
 
     /**
      * Extract ISO date from request. Tries event_date_iso first, then parses message_hint.
+     *
+     * @param  array<string,mixed>  $request
      */
     private function resolveDate(array $request): ?string
     {
@@ -146,7 +189,7 @@ class GoogleCalendarProvider implements CalendarAvailabilityProvider
                 if (preg_match('/(\d{1,2})\s+'.preg_quote($name, '/').'|'.preg_quote($name, '/').'\s+(\d{1,2})/', $lower, $m)) {
                     $day = (int) ($m[1] !== '' ? $m[1] : $m[2]);
                     if ($day >= 1 && $day <= 31) {
-                        $year = (int) date('Y');
+                        $year     = (int) date('Y');
                         $monthInt = (int) $num;
                         if (checkdate($monthInt, $day, $year)) {
                             return sprintf('%04d-%02d-%02d', $year, $monthInt, $day);
