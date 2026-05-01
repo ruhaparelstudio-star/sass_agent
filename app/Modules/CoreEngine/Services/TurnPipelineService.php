@@ -4,6 +4,7 @@ namespace App\Modules\CoreEngine\Services;
 
 use App\Models\Conversation;
 use App\Models\ConversationSummary;
+use App\Models\ConversationState;
 use App\Models\LeadProfile;
 use App\Models\Tenant;
 use App\Modules\AiLayer\Enums\Intent;
@@ -17,6 +18,8 @@ use App\Modules\Validation\Contracts\PolicyValidator;
 class TurnPipelineService
 {
     private const LOW_CONFIDENCE_THRESHOLD = 0.45;
+    private const COMPACT_VALUE_MAX_CHARS = 80;
+    private const COMPACT_BLOCK_MAX_CHARS = 320;
 
     public function __construct(
         private readonly InterpretationService $interpretationService,
@@ -36,8 +39,9 @@ class TurnPipelineService
     ): array {
         $state = $conversation->state()->firstOrFail();
         $dormantRetrieval = $this->resolveDormantRetrieval($tenant, $conversation, $context);
+        $classificationInstruction = $this->buildClassificationInstruction($instruction, $state, $context);
 
-        $interpretation = $this->interpretationService->interpret($tenant->id, $userMessage, $instruction);
+        $interpretation = $this->interpretationService->interpret($tenant->id, $userMessage, $classificationInstruction);
 
         $entities = $this->mergeEntities(
             $context['entities'] ?? [],
@@ -200,6 +204,165 @@ class TurnPipelineService
         }
 
         return $response;
+    }
+
+    /**
+     * @param  array<string,mixed>  $context
+     */
+    private function buildClassificationInstruction(string $instruction, ConversationState $state, array $context): string
+    {
+        $compactContext = $this->buildCompactLiveContext($state, $context);
+        if ($compactContext === '') {
+            return $instruction;
+        }
+
+        return rtrim($instruction)."\n\nCONTEXT_COMPACT (live_state):\n".$compactContext;
+    }
+
+    /**
+     * @param  array<string,mixed>  $context
+     */
+    private function buildCompactLiveContext(ConversationState $state, array $context): string
+    {
+        $entities = is_array($context['entities'] ?? null) ? $context['entities'] : [];
+        $previousBlockedAction = is_array($context['previous_blocked_action'] ?? null)
+            ? $context['previous_blocked_action']
+            : null;
+
+        $packageInterest = $this->firstNonEmptyString([
+            is_string($entities['package_interest'] ?? null) ? $entities['package_interest'] : null,
+            is_string($entities['resolved_package_name'] ?? null) ? $entities['resolved_package_name'] : null,
+        ]);
+
+        $previousBlockedSummary = null;
+        if ($previousBlockedAction !== null) {
+            $blockedAction = trim((string) ($previousBlockedAction['action'] ?? ''));
+            $blockedReason = trim((string) ($previousBlockedAction['reason'] ?? ''));
+            if ($blockedAction !== '' && $blockedReason !== '') {
+                $previousBlockedSummary = $blockedAction.':'.$blockedReason;
+            } elseif ($blockedAction !== '') {
+                $previousBlockedSummary = $blockedAction;
+            }
+        }
+
+        $orderedPairs = [
+            'current_stage' => $state->current_stage,
+            'active_goal' => $state->active_goal,
+            'agent_mode' => $state->agent_mode,
+            'memory_mode' => $state->memory_mode,
+            'pending_action' => $state->pending_action,
+            'customer_name' => $this->firstNonEmptyString([
+                is_string($entities['customer_name'] ?? null) ? $entities['customer_name'] : null,
+                is_string($entities['name'] ?? null) ? $entities['name'] : null,
+            ]),
+            'event_type' => is_string($entities['event_type'] ?? null) ? $entities['event_type'] : null,
+            'package_interest' => $packageInterest,
+            'previous_blocked_action' => $previousBlockedSummary,
+        ];
+
+        $lines = [];
+        foreach ($orderedPairs as $key => $rawValue) {
+            $value = $this->sanitizeCompactValue($rawValue);
+            if ($value === null) {
+                continue;
+            }
+
+            $lines[] = $key.'='.$value;
+        }
+
+        if ($lines === []) {
+            return '';
+        }
+
+        return $this->limitCompactBlock($lines);
+    }
+
+    private function sanitizeCompactValue(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        if (is_string($value)) {
+            $normalized = trim($value);
+        } elseif (is_int($value) || is_float($value)) {
+            $normalized = (string) $value;
+        } else {
+            return null;
+        }
+
+        if ($normalized === '') {
+            return null;
+        }
+
+        $normalized = preg_replace('/\s+/u', ' ', $normalized);
+        if (! is_string($normalized)) {
+            return null;
+        }
+
+        $normalized = trim($normalized);
+        if ($normalized === '') {
+            return null;
+        }
+
+        if (mb_strlen($normalized) > self::COMPACT_VALUE_MAX_CHARS) {
+            $normalized = mb_substr($normalized, 0, self::COMPACT_VALUE_MAX_CHARS - 3).'...';
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @param  array<int,mixed>  $candidates
+     */
+    private function firstNonEmptyString(array $candidates): ?string
+    {
+        foreach ($candidates as $candidate) {
+            if (! is_string($candidate)) {
+                continue;
+            }
+
+            $normalized = trim($candidate);
+            if ($normalized !== '') {
+                return $normalized;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  list<string>  $lines
+     */
+    private function limitCompactBlock(array $lines): string
+    {
+        $result = '';
+        foreach ($lines as $line) {
+            if ($result === '') {
+                if (mb_strlen($line) <= self::COMPACT_BLOCK_MAX_CHARS) {
+                    $result = $line;
+                    continue;
+                }
+
+                return mb_substr($line, 0, self::COMPACT_BLOCK_MAX_CHARS - 3).'...';
+            }
+
+            $candidate = $result."\n".$line;
+            if (mb_strlen($candidate) <= self::COMPACT_BLOCK_MAX_CHARS) {
+                $result = $candidate;
+                continue;
+            }
+
+            $remaining = self::COMPACT_BLOCK_MAX_CHARS - mb_strlen($result) - 1;
+            if ($remaining > 0) {
+                $truncatedLine = mb_substr($line, 0, max(0, $remaining - 3)).'...';
+                $result .= "\n".$truncatedLine;
+            }
+
+            break;
+        }
+
+        return $result;
     }
 
     /**
@@ -552,6 +715,10 @@ class TurnPipelineService
 
             if ($intent === Intent::ProvideName) {
                 return 'Makasih kak, namanya sudah saya catat. Siap kak, kakak lagi cari layanan untuk acara apa ya?';
+            }
+
+            if ($intent === Intent::ProvidePreference) {
+                return 'Siap kak, preferensinya sudah saya catat. Boleh share tanggal acaranya supaya saya bantu rekomendasi paket yang paling pas?';
             }
 
             return 'Terima kasih kak, boleh ceritakan kebutuhan acaranya biar saya bantu rekomendasi paket yang paling sesuai?';

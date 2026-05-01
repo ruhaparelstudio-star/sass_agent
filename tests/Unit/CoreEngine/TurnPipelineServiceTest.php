@@ -960,6 +960,113 @@ class TurnPipelineServiceTest extends TestCase
         $this->assertSame('executed', $result['trace']['status']);
     }
 
+    public function test_instruction_includes_compact_live_state_summary_for_intent_classification(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+        $probe = (object) ['instruction' => null];
+        $this->bindLlmJsonWithInstructionProbe(
+            '{"intent":"ask_package","confidence":0.9,"entities":{}}',
+            $probe
+        );
+
+        app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'paket wedding apa yang cocok?',
+            'extract intent',
+            [
+                'entities' => [
+                    'customer_name' => 'Aris Egi',
+                    'event_type' => 'wedding',
+                    'package_interest' => 'photo video premium',
+                ],
+                'previous_blocked_action' => [
+                    'action' => 'send_file',
+                    'reason' => 'missing_event_type',
+                ],
+            ]
+        );
+
+        $this->assertIsString($probe->instruction);
+        $this->assertStringContainsString("CONTEXT_COMPACT (live_state):\n", $probe->instruction);
+        $this->assertStringContainsString('current_stage=new', $probe->instruction);
+        $this->assertStringContainsString('active_goal=pricing', $probe->instruction);
+        $this->assertStringContainsString('agent_mode=assistant', $probe->instruction);
+        $this->assertStringContainsString('memory_mode=short', $probe->instruction);
+        $this->assertStringContainsString('customer_name=Aris Egi', $probe->instruction);
+        $this->assertStringContainsString('event_type=wedding', $probe->instruction);
+        $this->assertStringContainsString('package_interest=photo video premium', $probe->instruction);
+        $this->assertStringContainsString('previous_blocked_action=send_file:missing_event_type', $probe->instruction);
+    }
+
+    public function test_instruction_omits_empty_fields_and_caps_compact_summary_length(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+        $probe = (object) ['instruction' => null];
+        $this->bindLlmJsonWithInstructionProbe(
+            '{"intent":"ask_package","confidence":0.9,"entities":{}}',
+            $probe
+        );
+
+        $longName = str_repeat('Aris Egi ', 20);
+        $longPackage = str_repeat('Paket Wedding Ultra Hemat ', 20);
+
+        app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'paketnya apa ya?',
+            'extract intent',
+            [
+                'entities' => [
+                    'customer_name' => $longName,
+                    'event_type' => '',
+                    'package_interest' => $longPackage,
+                ],
+            ]
+        );
+
+        $this->assertIsString($probe->instruction);
+        $this->assertStringContainsString("CONTEXT_COMPACT (live_state):\n", $probe->instruction);
+        $this->assertStringNotContainsString('event_type=', $probe->instruction);
+
+        $compactBlock = $this->extractCompactBlock((string) $probe->instruction);
+        $this->assertNotNull($compactBlock);
+        $this->assertLessThanOrEqual(320, mb_strlen((string) $compactBlock));
+        $this->assertStringNotContainsString('  ', (string) $compactBlock);
+    }
+
+    public function test_instruction_does_not_include_archived_conversation_summary_by_default(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+        $probe = (object) ['instruction' => null];
+        $this->bindLlmJsonWithInstructionProbe(
+            '{"intent":"ask_package","confidence":0.9,"entities":{}}',
+            $probe
+        );
+
+        ConversationSummary::query()->create([
+            'tenant_id' => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'message_count' => 25,
+            'summary' => 'ARCHIVED_SUMMARY_SHOULD_NOT_APPEAR',
+            'summary_json' => [
+                'lead_profile' => ['name' => 'Aris Egi'],
+            ],
+            'retention_until' => now()->addDay(),
+            'summarized_at' => now(),
+        ]);
+
+        app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'halo',
+            'extract intent'
+        );
+
+        $this->assertIsString($probe->instruction);
+        $this->assertStringNotContainsString('ARCHIVED_SUMMARY_SHOULD_NOT_APPEAR', $probe->instruction);
+    }
+
     private function createConversation(): array
     {
         $tenant = Tenant::query()->create([
@@ -1008,5 +1115,38 @@ class TurnPipelineServiceTest extends TestCase
                 );
             }
         });
+    }
+
+    private function bindLlmJsonWithInstructionProbe(string $json, object $probe): void
+    {
+        $this->app->bind(LlmClientContract::class, fn () => new class($json, $probe) implements LlmClientContract {
+            public function __construct(
+                private readonly string $json,
+                private readonly object $probe
+            ) {}
+
+            public function complete(int $tenantId, string $userMessage, string $instruction): LlmResponse
+            {
+                $this->probe->instruction = $instruction;
+
+                return new LlmResponse(
+                    content: $this->json,
+                    model: 'fake-model',
+                    totalTokens: 10,
+                    raw: ['ok' => true],
+                );
+            }
+        });
+    }
+
+    private function extractCompactBlock(string $instruction): ?string
+    {
+        $marker = "CONTEXT_COMPACT (live_state):\n";
+        $position = strpos($instruction, $marker);
+        if ($position === false) {
+            return null;
+        }
+
+        return substr($instruction, $position + strlen($marker));
     }
 }
