@@ -710,6 +710,19 @@ class TurnPipelineService
                     return sprintf('Untuk %s, detail photo+video-nya %s.', $packageName, $itemSentence);
                 }
 
+                $namedPackage = trim((string) (
+                    $entities['resolved_package_name']
+                        ?? $entities['package_query']
+                        ?? $entities['package_interest']
+                        ?? ''
+                ));
+                if ($namedPackage !== '') {
+                    return sprintf(
+                        'Untuk paket %s, detail lengkapnya bisa langsung ditanyakan ke tim kami ya kak.',
+                        $namedPackage
+                    );
+                }
+
                 return 'Boleh sebutkan paket atau layanan yang mau dijelaskan detailnya ya kak?';
             }
 
