@@ -7,7 +7,7 @@ use App\Modules\AiLayer\Contracts\LlmClientContract;
 use App\Modules\AiLayer\Services\DeterministicIntentClassifier;
 use App\Modules\AiLayer\Services\OpenAiLlmClient;
 use App\Modules\Calendar\Contracts\CalendarAvailabilityProvider;
-use App\Modules\Calendar\Services\GoogleCalendarProvider;
+use App\Modules\Calendar\Services\BookingCapacityProvider;
 use App\Modules\Validation\Contracts\ActionPermissionValidator;
 use App\Modules\Validation\Contracts\GroundingValidator;
 use App\Modules\Validation\Contracts\ModeValidator;
@@ -32,7 +32,7 @@ class AppServiceProvider extends ServiceProvider
         $this->app->bind(GroundingValidator::class, GroundingValidatorService::class);
         $this->app->bind(ActionPermissionValidator::class, ActionPermissionValidatorService::class);
         $this->app->bind(ModeValidator::class, ModeValidatorService::class);
-        $this->app->bind(CalendarAvailabilityProvider::class, GoogleCalendarProvider::class);
+        $this->app->bind(CalendarAvailabilityProvider::class, BookingCapacityProvider::class);
         $this->app->bind(LlmClientContract::class, function () {
             $provider = (string) config('ai.provider', 'openai');
 

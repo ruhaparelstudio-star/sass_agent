@@ -689,7 +689,7 @@ class TurnPipelineService
             'reasons' => $reasons,
         ];
 
-        $sendBookingLinkMeta = $this->buildSendBookingLinkMeta($context);
+        $sendBookingLinkMeta = $this->buildSendBookingLinkMeta($context, $entities);
         if ($sendBookingLinkMeta !== null) {
             $candidate['meta'] = [
                 'send_booking_link' => $sendBookingLinkMeta,
@@ -1031,7 +1031,11 @@ class TurnPipelineService
     /**
      * @return array<string,mixed>|null
      */
-    private function buildSendBookingLinkMeta(array $context): ?array
+    /**
+     * @param  array<string,mixed>  $context
+     * @param  array<string,mixed>  $entities
+     */
+    private function buildSendBookingLinkMeta(array $context, array $entities = []): ?array
     {
         $delivery = $context['delivery_channel'] ?? null;
         if (! is_array($delivery)) {
@@ -1046,13 +1050,18 @@ class TurnPipelineService
             return null;
         }
 
+        $eventDateIso = is_string($entities['event_date_iso'] ?? null) && trim($entities['event_date_iso']) !== ''
+            ? trim($entities['event_date_iso'])
+            : null;
+
         return [
-            'provider' => $provider,
+            'provider'               => $provider,
             'wa_account_provider_ref' => $waAccountProviderRef,
             'wa_session_provider_ref' => $delivery['wa_session_provider_ref'] ?? null,
-            'provider_message_id' => null,
-            'to' => $to,
-            'meta' => [
+            'provider_message_id'    => null,
+            'to'                     => $to,
+            'event_date_iso'         => $eventDateIso,
+            'meta'                   => [
                 'source' => 'turn_pipeline',
             ],
         ];

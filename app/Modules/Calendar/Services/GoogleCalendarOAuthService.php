@@ -2,29 +2,64 @@
 
 namespace App\Modules\Calendar\Services;
 
+use App\Modules\Calendar\Exceptions\GoogleCalendarConfigException;
 use RuntimeException;
 
 class GoogleCalendarOAuthService
 {
     private const AUTH_URL  = 'https://accounts.google.com/o/oauth2/v2/auth';
     private const TOKEN_URL = 'https://oauth2.googleapis.com/token';
-    private const SCOPE     = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/userinfo.email';
 
-    public function __construct(
-        private readonly string $clientId,
-        private readonly string $clientSecret,
-        private readonly string $redirectUri,
-    ) {}
+    private function clientId(): string
+    {
+        $id = (string) config('services.google.client_id', '');
+        if ($id === '') {
+            throw new GoogleCalendarConfigException('GOOGLE_CLIENT_ID is not configured.');
+        }
 
-    public function getAuthorizationUrl(): string
+        return $id;
+    }
+
+    private function clientSecret(): string
+    {
+        $secret = (string) config('services.google.client_secret', '');
+        if ($secret === '') {
+            throw new GoogleCalendarConfigException('GOOGLE_CLIENT_SECRET is not configured.');
+        }
+
+        return $secret;
+    }
+
+    private function redirectUri(): string
+    {
+        $uri = (string) config('services.google.redirect_uri', '');
+        if ($uri === '') {
+            throw new GoogleCalendarConfigException('GOOGLE_REDIRECT_URI is not configured.');
+        }
+
+        return $uri;
+    }
+
+    private function scopes(): string
+    {
+        $scopes = config('services.google.calendar_scopes', [
+            'https://www.googleapis.com/auth/calendar.readonly',
+            'https://www.googleapis.com/auth/userinfo.email',
+        ]);
+
+        return is_array($scopes) ? implode(' ', $scopes) : (string) $scopes;
+    }
+
+    public function getAuthorizationUrl(string $state): string
     {
         $params = http_build_query([
-            'client_id'     => $this->clientId,
-            'redirect_uri'  => $this->redirectUri,
+            'client_id'     => $this->clientId(),
+            'redirect_uri'  => $this->redirectUri(),
             'response_type' => 'code',
-            'scope'         => self::SCOPE,
+            'scope'         => $this->scopes(),
             'access_type'   => 'offline',
             'prompt'        => 'consent',
+            'state'         => $state,
         ]);
 
         return self::AUTH_URL.'?'.$params;
@@ -37,9 +72,9 @@ class GoogleCalendarOAuthService
     {
         $response = $this->post(self::TOKEN_URL, [
             'code'          => $code,
-            'client_id'     => $this->clientId,
-            'client_secret' => $this->clientSecret,
-            'redirect_uri'  => $this->redirectUri,
+            'client_id'     => $this->clientId(),
+            'client_secret' => $this->clientSecret(),
+            'redirect_uri'  => $this->redirectUri(),
             'grant_type'    => 'authorization_code',
         ]);
 
@@ -66,8 +101,8 @@ class GoogleCalendarOAuthService
 
         $response = $this->post(self::TOKEN_URL, [
             'refresh_token' => $refreshToken,
-            'client_id'     => $this->clientId,
-            'client_secret' => $this->clientSecret,
+            'client_id'     => $this->clientId(),
+            'client_secret' => $this->clientSecret(),
             'grant_type'    => 'refresh_token',
         ]);
 

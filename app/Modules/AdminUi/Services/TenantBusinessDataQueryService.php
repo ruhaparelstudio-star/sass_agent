@@ -71,7 +71,7 @@ class TenantBusinessDataQueryService
                 ->toArray(),
             'businessHoursPolicy' => $businessHours,
             'calendarConnection'  => $this->resolveCalendarConnection($tenantId),
-            'calendarCredentials' => $this->resolveCalendarCredentials($tenantId),
+            'calendarSettings'    => $this->resolveCalendarSettings($tenantId),
         ];
     }
 
@@ -107,20 +107,14 @@ class TenantBusinessDataQueryService
         ];
     }
 
-    private function resolveCalendarCredentials(int $tenantId): array
+    private function resolveCalendarSettings(int $tenantId): array
     {
         $setting   = CalendarSetting::query()->where('tenant_id', $tenantId)->first();
         $rules     = is_array($setting?->rules) ? $setting->rules : [];
         $googleCfg = is_array($rules['google_calendar'] ?? null) ? $rules['google_calendar'] : [];
 
-        $clientId  = (string) ($googleCfg['client_id'] ?? '');
-        $secretSet = isset($googleCfg['client_secret_encrypted']) && $googleCfg['client_secret_encrypted'] !== '';
-
         return [
-            'client_id'           => $clientId,
-            'client_secret_set'   => $secretSet,
             'max_events_per_date' => (int) ($googleCfg['max_events_per_date'] ?? 1),
-            'credentials_ready'   => $clientId !== '' && $secretSet,
         ];
     }
 

@@ -117,7 +117,7 @@ Route::middleware('auth')->group(function (): void {
     Route::put('/tenant/business-data/package-items/{packageItem}', [TenantBusinessDataController::class, 'updatePackageItem']);
     Route::delete('/tenant/business-data/package-items/{packageItem}', [TenantBusinessDataController::class, 'destroyPackageItem']);
 
-    Route::post('/tenant/calendar/credentials', [TenantCalendarController::class, 'saveCredentials']);
+    Route::post('/tenant/calendar/settings', [TenantCalendarController::class, 'saveSettings']);
     Route::get('/tenant/calendar/connect', [TenantCalendarController::class, 'redirectToGoogle']);
     Route::get('/tenant/calendar/callback', [TenantCalendarController::class, 'handleCallback']);
     Route::post('/tenant/calendar/disconnect', [TenantCalendarController::class, 'disconnect']);

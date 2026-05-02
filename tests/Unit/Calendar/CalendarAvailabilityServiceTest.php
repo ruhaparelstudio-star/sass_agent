@@ -129,14 +129,14 @@ class CalendarAvailabilityServiceTest extends TestCase
         $this->assertSame('available', $result['status']);
         $this->assertTrue($result['available']);
         $this->assertTrue($result['checked']);
-        $this->assertSame('fake_provider', $result['source']);
+        $this->assertSame('booking_capacity', $result['source']);
 
         $this->assertDatabaseHas('calendar_availability_checks', [
             'tenant_id' => $tenantB->id,
             'calendar_connection_id' => $connectionB->id,
             'status' => 'available',
             'available' => true,
-            'source' => 'fake_provider',
+            'source' => 'booking_capacity',
         ]);
 
         $this->assertDatabaseMissing('calendar_availability_checks', [

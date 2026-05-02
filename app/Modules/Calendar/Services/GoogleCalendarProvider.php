@@ -5,7 +5,6 @@ namespace App\Modules\Calendar\Services;
 use App\Models\CalendarConnection;
 use App\Models\CalendarSetting;
 use App\Modules\Calendar\Contracts\CalendarAvailabilityProvider;
-use Illuminate\Support\Facades\Crypt;
 
 class GoogleCalendarProvider implements CalendarAvailabilityProvider
 {
@@ -37,39 +36,9 @@ class GoogleCalendarProvider implements CalendarAvailabilityProvider
         $rules     = is_array($setting?->rules) ? $setting->rules : [];
         $googleCfg = is_array($rules['google_calendar'] ?? null) ? $rules['google_calendar'] : [];
 
-        $clientId        = (string) ($googleCfg['client_id'] ?? '');
-        $secretEncrypted = (string) ($googleCfg['client_secret_encrypted'] ?? '');
-
-        if ($clientId === '' || $secretEncrypted === '') {
-            return [
-                'status'    => 'blocked',
-                'checked'   => false,
-                'available' => false,
-                'reason'    => 'calendar_integration_disabled',
-                'source'    => 'google_provider',
-            ];
-        }
-
-        try {
-            $clientSecret = Crypt::decryptString($secretEncrypted);
-        } catch (\Throwable) {
-            return [
-                'status'    => 'blocked',
-                'checked'   => true,
-                'available' => false,
-                'reason'    => 'calendar_provider_error',
-                'source'    => 'google_provider',
-                'meta'      => ['error' => 'Failed to decrypt client secret.'],
-            ];
-        }
-
         $maxEvents    = max(1, (int) ($googleCfg['max_events_per_date'] ?? 1));
         $timezone     = (string) ($setting?->timezone ?? 'Asia/Jakarta');
-        $oauthService = new GoogleCalendarOAuthService(
-            $clientId,
-            $clientSecret,
-            rtrim((string) config('app.url'), '/').'/tenant/calendar/callback',
-        );
+        $oauthService = new GoogleCalendarOAuthService();
 
         try {
             $config = $this->ensureFreshToken($connection, $oauthService);
@@ -135,8 +104,8 @@ class GoogleCalendarProvider implements CalendarAvailabilityProvider
             return $config;
         }
 
-        $config                    = $oauthService->refreshAccessToken($config);
-        $connection->config        = $config;
+        $config                      = $oauthService->refreshAccessToken($config);
+        $connection->config          = $config;
         $connection->last_checked_at = now();
         $connection->save();
 

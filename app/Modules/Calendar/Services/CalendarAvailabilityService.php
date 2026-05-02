@@ -16,7 +16,7 @@ class CalendarAvailabilityService
 
     /**
      * @param  array<string,mixed>  $request
-     * @return array{status:string,checked:bool,available:bool,reason:?string,source:string}
+     * @return array{status:string,checked:bool,available:bool,reason:?string,source:string,meta?:array<string,mixed>}
      */
     public function check(Tenant $tenant, array $request): array
     {
@@ -62,16 +62,17 @@ class CalendarAvailabilityService
         }
 
         $normalized = [
-            'status' => (string) ($result['status'] ?? 'blocked'),
-            'checked' => ($result['checked'] ?? false) === true,
+            'status'    => (string) ($result['status'] ?? 'blocked'),
+            'checked'   => ($result['checked'] ?? false) === true,
             'available' => ($result['available'] ?? false) === true,
-            'reason' => isset($result['reason']) && is_string($result['reason']) ? $result['reason'] : null,
-            'source' => is_string($result['source'] ?? null) && trim((string) $result['source']) !== ''
+            'reason'    => isset($result['reason']) && is_string($result['reason']) ? $result['reason'] : null,
+            'source'    => is_string($result['source'] ?? null) && trim((string) $result['source']) !== ''
                 ? (string) $result['source']
-                : 'fake_provider',
+                : 'unknown',
+            'meta'      => is_array($result['meta'] ?? null) ? $result['meta'] : null,
         ];
 
-        $this->persistCheck($tenant, $connection, $request, $normalized + ['meta' => $result['meta'] ?? null]);
+        $this->persistCheck($tenant, $connection, $request, $normalized);
 
         return $normalized;
     }

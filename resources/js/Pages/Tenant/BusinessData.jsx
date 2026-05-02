@@ -763,83 +763,17 @@ function SettingsStep({ bookingForm, businessHoursForm, bookingRows, onSubmitBoo
   )
 }
 
-function CalendarStep({ calendarConnection, calendarCredentials }) {
-  const isConnected       = calendarConnection?.status === 'connected'
-  const isEnabled         = calendarConnection?.is_enabled === true
-  const email             = calendarConnection?.email ?? null
-  const calendarId        = calendarConnection?.calendar_id ?? 'primary'
-  const credentialsReady  = calendarCredentials?.credentials_ready === true
-  const secretSet         = calendarCredentials?.client_secret_set === true
-  const currentClientId   = calendarCredentials?.client_id ?? ''
-  const currentMaxEvents  = calendarCredentials?.max_events_per_date ?? 1
-  const csrf              = document.querySelector('meta[name=csrf-token]')?.content ?? ''
+function CalendarStep({ calendarConnection, calendarSettings }) {
+  const isConnected    = calendarConnection?.status === 'connected'
+  const isEnabled      = calendarConnection?.is_enabled === true
+  const email          = calendarConnection?.email ?? null
+  const calendarId     = calendarConnection?.calendar_id ?? 'primary'
+  const currentMaxEvents = calendarSettings?.max_events_per_date ?? 1
+  const csrf           = document.querySelector('meta[name=csrf-token]')?.content ?? ''
 
   return (
     <div className="space-y-5">
-      {/* Section 1 — Kredensial Google API */}
-      <div className="rounded-xl border border-slate-200 bg-white p-5">
-        <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-700">
-          <Settings2 className="h-4 w-4 text-slate-400" /> Konfigurasi Kredensial Google
-        </h3>
-        <p className="mb-4 text-xs text-slate-400">
-          Buat OAuth 2.0 Client ID di <strong>Google Cloud Console</strong> → aktifkan <strong>Google Calendar API</strong> → tambahkan redirect URI <code className="rounded bg-slate-100 px-1 py-0.5 text-[10px]">{window.location.origin}/tenant/calendar/callback</code>
-        </p>
-
-        <form action="/tenant/calendar/credentials" method="POST" className="space-y-3">
-          <input type="hidden" name="_token" value={csrf} />
-
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-600">Google Client ID</label>
-            <input
-              type="text"
-              name="client_id"
-              defaultValue={currentClientId}
-              required
-              placeholder="123456789-abc.apps.googleusercontent.com"
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 placeholder:text-slate-300 focus:border-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-200"
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-600">
-              Google Client Secret
-              {secretSet && <span className="ml-1.5 text-[10px] font-normal text-emerald-600">(sudah tersimpan — kosongkan untuk pertahankan)</span>}
-            </label>
-            <input
-              type="password"
-              name="client_secret"
-              placeholder={secretSet ? '•••••••••••••••••••••' : 'Masukkan Client Secret'}
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 placeholder:text-slate-300 focus:border-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-200"
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-600">
-              Maksimal event per hari
-              <span className="ml-1 text-[10px] font-normal text-slate-400">(jika event di kalender sudah mencapai angka ini, tanggal dianggap tidak tersedia)</span>
-            </label>
-            <input
-              type="number"
-              name="max_events_per_date"
-              defaultValue={currentMaxEvents}
-              min="1"
-              max="50"
-              required
-              className="w-32 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 focus:border-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-200"
-            />
-          </div>
-
-          <button
-            type="submit"
-            className="flex items-center gap-2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
-          >
-            <Save className="h-4 w-4" />
-            Simpan Konfigurasi
-          </button>
-        </form>
-      </div>
-
-      {/* Section 2 — Status Koneksi */}
+      {/* Section 1 — Status Koneksi */}
       <div className="grid gap-5 lg:grid-cols-2">
         <div className="rounded-xl border border-slate-200 bg-white p-5">
           <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-700">
@@ -871,27 +805,23 @@ function CalendarStep({ calendarConnection, calendarCredentials }) {
 
           {isConnected && (
             <div className="mb-4 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5 text-xs text-slate-600">
-              <p className="font-medium text-slate-500 mb-0.5">Calendar ID</p>
+              <p className="font-medium text-slate-500 mb-0.5">Akun Google</p>
+              <p className="font-mono">{email ?? '—'}</p>
+              <p className="font-medium text-slate-500 mt-1.5 mb-0.5">Calendar ID</p>
               <p className="font-mono">{calendarId}</p>
             </div>
           )}
 
           <div className="flex flex-col gap-2">
             {!isConnected ? (
-              credentialsReady ? (
-                <a
-                  href="/tenant/calendar/connect"
-                  className="flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700"
-                >
-                  <CalendarCheck className="h-4 w-4" />
-                  Hubungkan Google Calendar
-                  <ExternalLink className="h-3.5 w-3.5 opacity-70" />
-                </a>
-              ) : (
-                <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2.5 text-xs text-amber-700">
-                  Simpan Client ID dan Secret terlebih dahulu untuk dapat menghubungkan Google Calendar.
-                </div>
-              )
+              <a
+                href="/tenant/calendar/connect"
+                className="flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700"
+              >
+                <CalendarCheck className="h-4 w-4" />
+                Hubungkan Google Calendar
+                <ExternalLink className="h-3.5 w-3.5 opacity-70" />
+              </a>
             ) : (
               <>
                 <form action="/tenant/calendar/toggle" method="POST" className="contents">
@@ -959,11 +889,45 @@ function CalendarStep({ calendarConnection, calendarCredentials }) {
 
           {!isConnected && (
             <div className="rounded-xl border border-amber-100 bg-amber-50 p-4 text-xs text-amber-700">
-              <p className="font-semibold mb-1">⚠ Belum Terhubung</p>
-              <p>AI akan langsung melakukan handoff ke admin setiap kali pelanggan meminta booking, karena tidak bisa memverifikasi ketersediaan tanggal.</p>
+              <p className="font-semibold mb-1">Belum Terhubung</p>
+              <p>AI akan melakukan handoff ke admin setiap kali pelanggan meminta booking, karena tidak bisa memverifikasi ketersediaan tanggal.</p>
             </div>
           )}
         </div>
+      </div>
+
+      {/* Section 2 — Kapasitas */}
+      <div className="rounded-xl border border-slate-200 bg-white p-5">
+        <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-700">
+          <Settings2 className="h-4 w-4 text-slate-400" /> Pengaturan Kapasitas
+        </h3>
+        <p className="mb-4 text-xs text-slate-400">
+          Tentukan batas maksimal event per hari. Jika jumlah event di kalender sudah mencapai batas ini, AI akan menganggap tanggal tersebut tidak tersedia.
+        </p>
+        <form action="/tenant/calendar/settings" method="POST" className="flex items-end gap-3">
+          <input type="hidden" name="_token" value={csrf} />
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600">
+              Maksimal event per hari
+            </label>
+            <input
+              type="number"
+              name="max_events_per_date"
+              defaultValue={currentMaxEvents}
+              min="1"
+              max="50"
+              required
+              className="w-32 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 focus:border-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-200"
+            />
+          </div>
+          <button
+            type="submit"
+            className="flex items-center gap-2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
+          >
+            <Save className="h-4 w-4" />
+            Simpan
+          </button>
+        </form>
       </div>
     </div>
   )
@@ -996,8 +960,8 @@ export default function BusinessData({ data, assets, discountTypes = ['percentag
   const businessHoursPolicy = data?.businessHoursPolicy ?? {
     enabled: false, timezone: 'Asia/Jakarta', start_time: '09:00', end_time: '17:00', days: ['mon','tue','wed','thu','fri'],
   }
-  const calendarConnection  = data?.calendarConnection ?? { status: 'disconnected', is_enabled: false, email: null, calendar_id: 'primary' }
-  const calendarCredentials = data?.calendarCredentials ?? { client_id: '', client_secret_set: false, max_events_per_date: 1, credentials_ready: false }
+  const calendarConnection = data?.calendarConnection ?? { status: 'disconnected', is_enabled: false, email: null, calendar_id: 'primary' }
+  const calendarSettings   = data?.calendarSettings ?? { max_events_per_date: 1 }
 
   const gate = {
     catalog: true,
@@ -1155,7 +1119,7 @@ export default function BusinessData({ data, assets, discountTypes = ['percentag
           {resolvedStep === 'faq'           && <FaqStep form={faqForm} rows={faqs} onSubmit={submitFaq} />}
           {resolvedStep === 'assets'        && <AssetsStep pricelistForm={pricelistForm} invoiceForm={invoiceForm} rows={uploadedAssets} onSubmitPricelist={submitPricelist} onSubmitInvoice={submitInvoiceAsset} />}
           {resolvedStep === 'settings'      && <SettingsStep bookingForm={bookingForm} businessHoursForm={businessHoursForm} bookingRows={bookingSettings} onSubmitBooking={submitBookingSetting} onSubmitBusinessHours={submitBusinessHours} />}
-          {resolvedStep === 'calendar'      && <CalendarStep calendarConnection={calendarConnection} calendarCredentials={calendarCredentials} />}
+          {resolvedStep === 'calendar'      && <CalendarStep calendarConnection={calendarConnection} calendarSettings={calendarSettings} />}
         </div>
 
         {/* Step navigation */}

@@ -6,11 +6,12 @@ use App\Enums\UserRole;
 use App\Http\Controllers\Controller;
 use App\Models\CalendarConnection;
 use App\Models\CalendarSetting;
+use App\Modules\Calendar\Exceptions\GoogleCalendarConfigException;
 use App\Modules\Calendar\Services\GoogleCalendarOAuthService;
 use App\Modules\Tenancy\Services\TenantContextResolver;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Str;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class TenantCalendarController extends Controller
@@ -19,13 +20,11 @@ class TenantCalendarController extends Controller
         private readonly TenantContextResolver $tenantContextResolver,
     ) {}
 
-    public function saveCredentials(Request $request): RedirectResponse
+    public function saveSettings(Request $request): RedirectResponse
     {
         $tenantId = $this->resolveAuthorizedTenantId($request);
 
         $payload = $request->validate([
-            'client_id'           => ['required', 'string', 'max:255'],
-            'client_secret'       => ['nullable', 'string', 'max:255'],
             'max_events_per_date' => ['required', 'integer', 'min:1', 'max:50'],
         ]);
 
@@ -38,41 +37,38 @@ class TenantCalendarController extends Controller
         $rules     = is_array($setting->rules) ? $setting->rules : [];
         $googleCfg = is_array($rules['google_calendar'] ?? null) ? $rules['google_calendar'] : [];
 
-        $googleCfg['client_id']           = $payload['client_id'];
         $googleCfg['max_events_per_date'] = (int) $payload['max_events_per_date'];
 
-        if (! empty($payload['client_secret'])) {
-            $googleCfg['client_secret_encrypted'] = Crypt::encryptString($payload['client_secret']);
-        }
+        // Remove any tenant-level OAuth credentials that may exist from the old flow.
+        unset($googleCfg['client_id'], $googleCfg['client_secret_encrypted']);
 
         $rules['google_calendar'] = $googleCfg;
         $setting->rules           = $rules;
         $setting->save();
 
         return redirect('/tenant/business-data?step=calendar')
-            ->with('success', 'Konfigurasi Google Calendar berhasil disimpan.');
+            ->with('success', 'Pengaturan Google Calendar berhasil disimpan.');
     }
 
     public function redirectToGoogle(Request $request): RedirectResponse
     {
         $tenantId = $this->resolveAuthorizedTenantId($request);
 
-        [$clientId, $clientSecret] = $this->resolveTenantGoogleCredentials($tenantId);
+        $oauthService = new GoogleCalendarOAuthService();
 
-        if ($clientId === '' || $clientSecret === '') {
+        try {
+            $state = $this->generateAndStoreOAuthState($request, $tenantId);
+            $url   = $oauthService->getAuthorizationUrl($state);
+        } catch (GoogleCalendarConfigException) {
             return redirect('/tenant/business-data?step=calendar')
-                ->with('error', 'Simpan Google Client ID dan Secret terlebih dahulu sebelum menghubungkan.');
+                ->with('error', 'Google Calendar belum dikonfigurasi oleh platform. Hubungi administrator.');
         }
 
-        $oauthService = $this->makeOAuthService($clientId, $clientSecret);
-
-        return redirect($oauthService->getAuthorizationUrl());
+        return redirect($url);
     }
 
     public function handleCallback(Request $request): RedirectResponse
     {
-        $tenantId = $this->resolveAuthorizedTenantId($request);
-
         $error = $request->query('error');
         if (is_string($error) && $error !== '') {
             return redirect('/tenant/business-data?step=calendar')
@@ -85,17 +81,21 @@ class TenantCalendarController extends Controller
                 ->with('error', 'Kode otorisasi tidak diterima dari Google.');
         }
 
-        [$clientId, $clientSecret] = $this->resolveTenantGoogleCredentials($tenantId);
+        $state    = (string) ($request->query('state') ?? '');
+        $tenantId = $this->validateOAuthStateAndResolveTenant($request, $state);
 
-        if ($clientId === '' || $clientSecret === '') {
+        if ($tenantId === null) {
             return redirect('/tenant/business-data?step=calendar')
-                ->with('error', 'Konfigurasi Google belum tersimpan. Simpan Client ID dan Secret terlebih dahulu.');
+                ->with('error', 'Sesi OAuth tidak valid. Silakan coba lagi.');
         }
 
-        $oauthService = $this->makeOAuthService($clientId, $clientSecret);
+        $oauthService = new GoogleCalendarOAuthService();
 
         try {
             $tokens = $oauthService->exchangeCodeForTokens($code);
+        } catch (GoogleCalendarConfigException) {
+            return redirect('/tenant/business-data?step=calendar')
+                ->with('error', 'Google Calendar belum dikonfigurasi oleh platform. Hubungi administrator.');
         } catch (\Throwable $e) {
             return redirect('/tenant/business-data?step=calendar')
                 ->with('error', 'Gagal menghubungkan Google Calendar: '.$e->getMessage());
@@ -164,40 +164,29 @@ class TenantCalendarController extends Controller
             ->with('success', "Google Calendar berhasil {$label}.");
     }
 
-    /**
-     * Resolve per-tenant Google OAuth credentials from CalendarSetting.
-     *
-     * @return array{0:string,1:string}  [clientId, clientSecret]
-     */
-    private function resolveTenantGoogleCredentials(int $tenantId): array
+    private function generateAndStoreOAuthState(Request $request, int $tenantId): string
     {
-        $setting = CalendarSetting::query()->where('tenant_id', $tenantId)->first();
-        $rules   = is_array($setting?->rules) ? $setting->rules : [];
-        $cfg     = is_array($rules['google_calendar'] ?? null) ? $rules['google_calendar'] : [];
+        $nonce = Str::random(32);
+        $request->session()->put('google_oauth_state', $nonce);
+        $request->session()->put('google_oauth_tenant_id', $tenantId);
 
-        $clientId        = (string) ($cfg['client_id'] ?? '');
-        $secretEncrypted = (string) ($cfg['client_secret_encrypted'] ?? '');
-
-        if ($clientId === '' || $secretEncrypted === '') {
-            return ['', ''];
-        }
-
-        try {
-            $clientSecret = Crypt::decryptString($secretEncrypted);
-        } catch (\Throwable) {
-            return [$clientId, ''];
-        }
-
-        return [$clientId, $clientSecret];
+        return $nonce;
     }
 
-    private function makeOAuthService(string $clientId, string $clientSecret): GoogleCalendarOAuthService
+    /**
+     * Validate state nonce and resolve tenant ID from session.
+     * Falls back to resolving from authenticated session if state matches.
+     */
+    private function validateOAuthStateAndResolveTenant(Request $request, string $state): ?int
     {
-        return new GoogleCalendarOAuthService(
-            $clientId,
-            $clientSecret,
-            rtrim((string) config('app.url'), '/').'/tenant/calendar/callback',
-        );
+        $storedNonce    = (string) $request->session()->pull('google_oauth_state', '');
+        $storedTenantId = $request->session()->pull('google_oauth_tenant_id', null);
+
+        if ($storedNonce === '' || $state !== $storedNonce) {
+            return null;
+        }
+
+        return is_int($storedTenantId) ? $storedTenantId : null;
     }
 
     private function resolveAuthorizedTenantId(Request $request): int

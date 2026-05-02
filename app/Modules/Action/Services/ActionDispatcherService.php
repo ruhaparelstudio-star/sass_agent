@@ -3,6 +3,7 @@
 namespace App\Modules\Action\Services;
 
 use App\Models\ActionLog;
+use App\Models\BookingDateCapacity;
 use App\Models\BookingSetting;
 use App\Models\Conversation;
 use App\Models\ConversationState;
@@ -358,12 +359,22 @@ class ActionDispatcherService
             ];
         }
 
+        $eventDateIso = is_string($sendBookingLink['event_date_iso'] ?? null)
+            && trim($sendBookingLink['event_date_iso']) !== ''
+            ? trim($sendBookingLink['event_date_iso'])
+            : null;
+
+        if ($eventDateIso !== null) {
+            BookingDateCapacity::incrementForTenantDate($tenant->id, $eventDateIso);
+        }
+
         return [
             'status' => 'executed',
             'reason' => null,
             'meta' => [
-                'executed' => true,
+                'executed'               => true,
                 'wa_outbound_message_id' => $outbound->id,
+                'booking_date'           => $eventDateIso,
             ],
         ];
     }
