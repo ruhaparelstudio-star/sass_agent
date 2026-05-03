@@ -4,6 +4,7 @@ namespace Tests\Unit\Calendar;
 
 use App\Models\Tenant;
 use App\Modules\Calendar\Contracts\CalendarAvailabilityProvider;
+use App\Modules\Calendar\Services\BookingCapacityProvider;
 use App\Modules\Calendar\Services\CalendarAvailabilityService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -121,6 +122,8 @@ class CalendarAvailabilityServiceTest extends TestCase
             'slot_minutes' => 60,
             'is_active' => true,
         ]);
+
+        $this->app->bind(CalendarAvailabilityProvider::class, BookingCapacityProvider::class);
 
         $result = app(CalendarAvailabilityService::class)->check($tenantB, [
             'event_date_iso' => '2026-05-07',

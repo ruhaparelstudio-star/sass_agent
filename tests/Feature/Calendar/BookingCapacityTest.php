@@ -6,6 +6,8 @@ use App\Models\BookingDateCapacity;
 use App\Models\CalendarConnection;
 use App\Models\CalendarSetting;
 use App\Models\Tenant;
+use App\Modules\Calendar\Contracts\CalendarAvailabilityProvider;
+use App\Modules\Calendar\Services\BookingCapacityProvider;
 use App\Modules\Calendar\Services\CalendarAvailabilityService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -13,6 +15,12 @@ use Tests\TestCase;
 class BookingCapacityTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->app->bind(CalendarAvailabilityProvider::class, BookingCapacityProvider::class);
+    }
 
     private function createTenant(string $slug): Tenant
     {
