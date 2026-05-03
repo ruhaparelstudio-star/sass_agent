@@ -366,6 +366,11 @@ TEXT;
             $state->selected_package,
         ]);
 
+        $eventDateIso = $this->firstNonEmptyString([
+            $entities['event_date_iso'] ?? null,
+            $state->event_date_iso,
+        ]);
+
         $this->conversationService->upsertState($conversation, $tenant, [
             'current_stage' => $currentStage,
             'active_goal' => $activeGoal,
@@ -374,6 +379,7 @@ TEXT;
             'service_interest' => $serviceInterest,
             'package_interest' => $packageInterest,
             'selected_package' => $selectedPackage,
+            'event_date_iso' => $eventDateIso,
             'pending_action' => $pendingAction,
         ]);
     }
@@ -388,6 +394,7 @@ TEXT;
         $serviceInterest = $this->firstNonEmptyString([$state->service_interest]);
         $packageInterest = $this->firstNonEmptyString([$state->package_interest]);
         $selectedPackage = $this->firstNonEmptyString([$state->selected_package]);
+        $eventDateIso = $this->firstNonEmptyString([$state->event_date_iso]);
 
         return [
             'customer_name' => $name,
@@ -398,6 +405,7 @@ TEXT;
             'package_query' => $packageInterest,
             'resolved_package_name' => $selectedPackage,
             'selected_package' => $selectedPackage,
+            'event_date_iso' => $eventDateIso,
         ];
     }
 
@@ -470,18 +478,21 @@ TEXT;
             'calendar' => ['is_grounded' => false, 'source' => 'calendar_unchecked'],
         ];
 
+        $calendarCheckRequired = $this->shouldCheckCalendar($state->active_goal, $userMessage);
+
         $calendarCheck = [
             'status' => 'blocked',
             'checked' => false,
             'available' => false,
-            'reason' => 'calendar_not_required',
+            'reason' => $calendarCheckRequired ? 'calendar_integration_disabled' : 'calendar_not_required',
             'source' => 'policy',
         ];
 
-        if (($features['calendar_access'] ?? false) === true && $this->shouldCheckCalendar($state->active_goal, $userMessage)) {
+        if (($features['calendar_access'] ?? false) === true && $calendarCheckRequired) {
             $calendarCheck = $this->calendarAvailabilityService->check($tenant, [
                 'conversation_id' => $conversation->id,
                 'message_hint' => mb_substr($userMessage, 0, 120),
+                'event_date_iso' => $state->event_date_iso,
             ]);
             $grounding['calendar'] = [
                 'is_grounded' => $calendarCheck['checked'] === true && $calendarCheck['available'] === true,

@@ -17,6 +17,7 @@ class ConversationState extends Model
         'service_interest',
         'package_interest',
         'selected_package',
+        'event_date_iso',
         'pending_action',
         'agent_mode',
         'memory_mode',
