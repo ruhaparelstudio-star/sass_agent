@@ -25,6 +25,7 @@ class InterpretationResult
                 'resolved_package_name' => null,
                 'customer_name' => null,
                 'event_type' => null,
+                'service_interest' => null,
                 'event_date_iso' => null,
                 'location' => null,
                 'budget_amount' => null,

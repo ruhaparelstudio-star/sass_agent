@@ -17,6 +17,10 @@ class DispatchWaOutboundMessageJob implements ShouldQueue
         public readonly int $tenantId,
         public readonly int $outboundMessageId
     ) {
+        // Job di-dispatch dari dalam DB::transaction() di WaInboundTurnOrchestratorService.
+        // Tanpa afterCommit, worker bisa pickup job sebelum transaction commit sehingga
+        // WaOutboundMessage belum ada di DB dan job early-return dengan status tetap pending.
+        $this->afterCommit();
     }
 
     public function handle(WaGatewayClient $gatewayClient, WaOutboundService $outboundService): void

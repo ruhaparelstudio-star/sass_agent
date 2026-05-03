@@ -348,8 +348,6 @@ TEXT;
         $serviceInterest = $this->firstNonEmptyString([
             $entities['service_interest'] ?? null,
             $entities['event_type'] ?? null,
-            $entities['package_interest'] ?? null,
-            $entities['package_query'] ?? null,
             $state->service_interest,
         ]);
 

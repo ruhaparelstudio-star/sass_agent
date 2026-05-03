@@ -960,6 +960,9 @@ class ConversationScenarioPercakapanRegressionTest extends TestCase
 
     public function test_business_hours_policy_blocks_sensitive_action_and_does_not_claim_file_sent(): void
     {
+        // Force a Monday at 08:00 UTC — always outside 'sun' 09:00-17:00 window.
+        \Carbon\Carbon::setTestNow('2026-05-04 08:00:00');
+
         Queue::fake();
         Config::set('agent.business_hours', [
             'enabled' => true,
@@ -1060,6 +1063,7 @@ class ConversationScenarioPercakapanRegressionTest extends TestCase
         $this->assertFalse($fileOutboundExists, 'No file outbound should be queued outside business hours.');
 
         Config::set('agent.business_hours', null);
+        \Carbon\Carbon::setTestNow(null);
     }
 
     private function bindFeatureGateAlwaysOn(): void

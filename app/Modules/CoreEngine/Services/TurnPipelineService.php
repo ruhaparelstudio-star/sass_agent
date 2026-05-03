@@ -828,8 +828,15 @@ class TurnPipelineService
     private function hasKnownEventType(array $entities): bool
     {
         $eventType = trim((string) ($entities['event_type'] ?? ''));
+        if ($eventType !== '') {
+            return true;
+        }
 
-        return $eventType !== '';
+        // Fallback: "photo wedding", "foto video pernikahan", dll sering diekstrak sebagai
+        // service_interest bukan event_type — cukup untuk melanjutkan pricelist flow.
+        $serviceInterest = trim((string) ($entities['service_interest'] ?? ''));
+
+        return $serviceInterest !== '';
     }
 
     /**

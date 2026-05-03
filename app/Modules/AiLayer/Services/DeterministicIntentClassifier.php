@@ -41,6 +41,7 @@ class DeterministicIntentClassifier implements IntentClassifierContract
         }
         $customerName = $this->normalizeName($decoded['entities']['customer_name'] ?? ($decoded['entities']['name'] ?? null));
         $eventType = $this->normalizeText($decoded['entities']['event_type'] ?? null);
+        $serviceInterest = $this->normalizeText($decoded['entities']['service_interest'] ?? null);
         $eventDateIso = $this->parseEventDateIso($decoded['entities']['event_date'] ?? null);
         $location = $this->normalizeText($decoded['entities']['location'] ?? null);
         $budgetAmount = $this->parseBudgetAmount($decoded['entities']['budget'] ?? null);
@@ -66,6 +67,7 @@ class DeterministicIntentClassifier implements IntentClassifierContract
                 'resolved_package_name' => $resolvedName,
                 'customer_name' => $customerName,
                 'event_type' => $eventType,
+                'service_interest' => $serviceInterest,
                 'event_date_iso' => $eventDateIso,
                 'location' => $location,
                 'budget_amount' => $budgetAmount,
@@ -105,6 +107,7 @@ class DeterministicIntentClassifier implements IntentClassifierContract
                 'resolved_package_name' => null,
                 'customer_name' => $customerName,
                 'event_type' => null,
+                'service_interest' => null,
                 'event_date_iso' => null,
                 'location' => null,
                 'budget_amount' => null,

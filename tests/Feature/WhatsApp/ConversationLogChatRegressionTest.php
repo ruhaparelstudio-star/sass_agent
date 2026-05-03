@@ -450,6 +450,134 @@ class ConversationLogChatRegressionTest extends TestCase
         );
     }
 
+    /**
+     * Regression: "untuk photo wedding ka" menghasilkan service_interest bukan event_type.
+     * Pipeline harus tetap mengirim pricelist karena service_interest adalah fallback valid
+     * untuk kondisi missing_event_type.
+     *
+     * Turn 1: "boleh minta pricelistnya"     → ask_pricelist, blocked missing_name
+     * Turn 2: "nama saya aris egi ka"         → provide_name, blocked missing_event_type
+     * Turn 3: "untuk photo wedding ka"        → provide_event_type, service_interest extracted
+     *                                            → pricelist harus dikirim (bug sebelumnya: tidak dikirim)
+     */
+    public function test_pricelist_sent_when_service_interest_extracted_instead_of_event_type(): void
+    {
+        Queue::fake();
+        $this->bindFeatureGate(leadLimit: 0, automationEnabled: true, calendarAccess: false);
+
+        $this->bindLlmJsonSequence([
+            // Turn 1: "boleh minta pricelistnya"
+            '{"intent":"ask_pricelist","confidence":0.95,"entities":{}}',
+            // Turn 2: "nama saya aris egi ka"
+            '{"intent":"provide_name","confidence":0.97,"entities":{"customer_name":"Aris Egi"}}',
+            // Turn 3: "untuk photo wedding ka" — AI ekstrak service_interest, bukan event_type
+            '{"intent":"provide_event_type","confidence":0.90,"entities":{"service_interest":"photo wedding"}}',
+        ]);
+
+        $tenant = Tenant::query()->create([
+            'name' => 'Tenant Test',
+            'slug' => 'tenant-test-photo-wedding',
+            'is_active' => true,
+        ]);
+
+        $account = WaAccount::query()->create([
+            'tenant_id'    => $tenant->id,
+            'provider'     => 'meta',
+            'provider_ref' => 'acct-photo-wedding',
+            'phone'        => '+6281234567890',
+            'status'       => 'connected',
+            'last_payload' => ['event' => 'connected'],
+        ]);
+
+        $session = WaSession::query()->create([
+            'tenant_id'    => $tenant->id,
+            'wa_account_id' => $account->id,
+            'provider'     => 'meta',
+            'provider_ref' => 'sess-photo-wedding',
+            'status'       => 'active',
+            'last_payload' => ['event' => 'active'],
+        ]);
+
+        $this->seedLogChatKnowledgeAndAssets($tenant);
+
+        $orchestrator = app(WaInboundTurnOrchestratorService::class);
+        $lastActionLogId = 0;
+
+        $turns = [
+            1 => 'boleh minta pricelistnya',
+            2 => 'nama saya aris egi ka',
+            3 => 'untuk photo wedding ka',
+        ];
+
+        $stateByTurn    = [];
+        $actionLogsByTurn = [];
+
+        foreach ($turns as $turn => $text) {
+            $inbound = WaInboundMessage::query()->create([
+                'tenant_id'           => $tenant->id,
+                'wa_account_id'       => $account->id,
+                'wa_session_id'       => $session->id,
+                'provider'            => 'meta',
+                'provider_message_id' => sprintf('photo-wedding-turn-%d', $turn),
+                'from'                => '+6281234567890',
+                'to'                  => '+6289876543210',
+                'message_type'        => 'text',
+                'message_timestamp'   => now()->addSeconds($turn),
+                'payload'             => ['message' => ['conversation' => $text]],
+                'meta'                => ['scenario' => 'photo_wedding', 'turn' => $turn],
+            ]);
+
+            $orchestrator->process($tenant, $inbound);
+
+            $conversation = Conversation::query()
+                ->where('tenant_id', $tenant->id)
+                ->where('customer_phone', '6281234567890')
+                ->latest('id')
+                ->first();
+
+            $stateByTurn[$turn] = $conversation
+                ? ConversationState::query()
+                    ->where('tenant_id', $tenant->id)
+                    ->where('conversation_id', $conversation->id)
+                    ->first()
+                : null;
+
+            $actionLogsByTurn[$turn] = ActionLog::query()
+                ->where('tenant_id', $tenant->id)
+                ->where('id', '>', $lastActionLogId)
+                ->orderBy('id')
+                ->get()
+                ->all();
+
+            $lastActionLogId = (int) (ActionLog::query()->max('id') ?? 0);
+        }
+
+        $failures = [];
+
+        // Turn 1: pricelist blocked missing_name
+        $this->expectTrue($failures, ($stateByTurn[1]?->pending_action ?? null) === 'send_pricelist', 'Turn 1: pending_action must be send_pricelist.');
+        $this->expectTrue($failures, ($stateByTurn[1]?->current_stage ?? null) === 'collecting_name', 'Turn 1: stage must be collecting_name.');
+
+        // Turn 2: name collected, blocked missing_event_type
+        $this->expectTrue($failures, ($stateByTurn[2]?->customer_name ?? null) === 'Aris Egi', 'Turn 2: customer_name must be Aris Egi.');
+        $this->expectTrue($failures, ($stateByTurn[2]?->current_stage ?? null) === 'collecting_service', 'Turn 2: stage must be collecting_service.');
+
+        // Turn 3: service_interest diekstrak → pricelist harus terkirim (fix Bug B)
+        $this->expectTrue(
+            $failures,
+            $this->hasActionLog($actionLogsByTurn[3], 'send_file', 'executed'),
+            'Turn 3: send_file must be executed even when AI extracts service_interest instead of event_type.'
+        );
+        $this->expectTrue($failures, ($stateByTurn[3]?->current_stage ?? null) === 'pricelist_sent', 'Turn 3: stage must be pricelist_sent.');
+        $this->expectTrue($failures, ($stateByTurn[3]?->pending_action ?? null) === null, 'Turn 3: pending_action must be cleared after pricelist sent.');
+
+        $message = $failures === []
+            ? ''
+            : "Photo wedding regression assertions failed:\n- " . implode("\n- ", $failures);
+
+        $this->assertSame([], $failures, $message);
+    }
+
     // --- Helpers ---
 
     private function bindFeatureGate(int $leadLimit, bool $automationEnabled, bool $calendarAccess): void
