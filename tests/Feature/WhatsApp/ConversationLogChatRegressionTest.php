@@ -38,8 +38,10 @@ use Tests\TestCase;
  * Turn 3: "saya aris egi saputra"                       → provide_name, ask event type
  * Turn 4: "untuk acara wedding ka"                      → provide_event_type, send pricelist
  * Turn 5: "untuk photo video wedding detailnya gimana"  → ask_package_detail
- * Turn 6: "okk ka aku mau booking"                      → booking_intent, blocked missing_event_date
- * Turn 7: "tanggal 30 may 2026 ka"                      → provide_date (normalized to booking_intent)
+ * Turn 6: "okk ka aku mau booking"                      → booking_intent, AI tanya tanggal (no immediate handoff)
+ *                                                          active_goal='booking' diset untuk turn berikutnya
+ * Turn 7: "tanggal 30 may 2026 ka"                      → provide_date → normalized to booking_intent
+ *                                                          active_goal='booking' → calendar check dijalankan
  *                                                          calendar disabled (Starter plan)
  *                                                          → handoff ke admin (bukan "kami bantu cek")
  */
@@ -251,48 +253,68 @@ class ConversationLogChatRegressionTest extends TestCase
         $this->expectTrue($failures, str_contains($t5Reply, 'detail photo+video'), 'Turn 5: reply must contain package detail.');
         $this->expectTrue($failures, ! str_contains($t5Reply, 'nama kakak'), 'Turn 5: reply must not ask for name.');
 
-        // --- Turn 6: booking_intent, calendar disabled → handoff langsung (fix baru) ---
-        // Dengan fix: ketika "booking" ada di pesan, shouldCheckCalendar=true,
-        // calendarAccess=false → calendarCheck.reason='calendar_integration_disabled' → handoff dipicu SEKARANG.
-        // PRD section 13: calendar disabled → handoff, bukan "kami bantu cek".
+        // --- Turn 6: booking_intent, data masih kurang → AI tanya tanggal, TIDAK handoff ---
+        // active_goal belum 'booking' saat Turn 6 → shouldCheckCalendar=false
+        // calendar_check.reason='calendar_not_required' (bukan 'calendar_integration_disabled')
+        // missing_event_date ada → hasNonCalendarBlockers=true → handoff calendar dicegah.
         $t6 = $results[6];
         $t6Decision = (array) ($t6['inboundTurnTrace']?->decision_json ?? []);
         $t6Reply    = mb_strtolower((string) ($t6['inboundTurnTrace']?->final_reply ?? ''));
         $this->expectTrue($failures, ($t6Decision['intent'] ?? null) === 'booking_intent', 'Turn 6: intent must be booking_intent.');
-        $this->expectTrue($failures, ($t6['state']?->active_goal ?? null) === 'booking', 'Turn 6: active_goal must be booking.');
+        $this->expectTrue($failures, ($t6['state']?->active_goal ?? null) === 'booking', 'Turn 6: active_goal must be set to booking.');
         $this->expectTrue(
             $failures,
-            ($t6Decision['handoff_required'] ?? false) === true,
-            'Turn 6: handoff_required must be true — calendar disabled triggers immediate handoff per PRD.'
+            ($t6Decision['handoff_required'] ?? true) === false,
+            'Turn 6: handoff_required must be false — data incomplete, AI asks for date first.'
         );
         $this->expectTrue(
             $failures,
-            ($t6Decision['handoff_reason_code'] ?? null) === 'calendar_unavailable',
-            'Turn 6: handoff_reason_code must be calendar_unavailable.'
-        );
-        $this->expectTrue(
-            $failures,
-            ($t6['state']?->agent_mode ?? null) === 'handoff',
-            'Turn 6: agent_mode must become handoff.'
-        );
-        $this->expectTrue(
-            $failures,
-            $this->hasActionLog($t6['newActionLogs']->all(), 'handoff_to_human', 'executed'),
-            'Turn 6: handoff_to_human must be executed.'
-        );
-        // Reply harus handoff, bukan "kami bantu cek" (bug lama terjadi di sini)
-        $this->expectTrue(
-            $failures,
-            ! str_contains($t6Reply, 'kami bantu cek') && ! str_contains($t6Reply, 'ketersediaan jadwalnya'),
-            'Turn 6: reply must NOT claim to check availability when calendar is disabled.'
-        );
-        $this->expectTrue(
-            $failures,
-            str_contains($t6Reply, 'admin') || str_contains($t6Reply, 'teruskan') || str_contains($t6Reply, 'tim kami'),
-            'Turn 6: reply must be handoff message redirecting to admin.'
+            str_contains($t6Reply, 'tanggal') || str_contains($t6Reply, 'date') || str_contains($t6Reply, 'jadwal'),
+            'Turn 6: reply must ask for event date.'
         );
 
-        // Handoff record calendar_unavailable harus dibuat di turn 6
+        // --- Turn 7: provide_date → normalized to booking_intent, calendar disabled → handoff ---
+        $t7 = $results[7];
+        $t7State     = $t7['state'];
+        $t7Decision  = (array) ($t7['inboundTurnTrace']?->decision_json ?? []);
+        $t7Reply     = mb_strtolower((string) ($t7['inboundTurnTrace']?->final_reply ?? ''));
+
+        $this->expectTrue(
+            $failures,
+            ($t7State?->event_date_iso ?? null) === '2026-05-30',
+            'Turn 7: event_date_iso=2026-05-30 must be persisted to conversation_states.'
+        );
+        $this->expectTrue(
+            $failures,
+            ($t7Decision['handoff_required'] ?? false) === true,
+            'Turn 7: handoff_required must be true — all data present, calendar disabled triggers handoff.'
+        );
+        $this->expectTrue(
+            $failures,
+            ($t7Decision['handoff_reason_code'] ?? null) === 'calendar_unavailable',
+            'Turn 7: handoff_reason_code must be calendar_unavailable.'
+        );
+        $this->expectTrue(
+            $failures,
+            ($t7State?->agent_mode ?? null) === 'handoff',
+            'Turn 7: agent_mode must become handoff.'
+        );
+        $this->expectTrue(
+            $failures,
+            $this->hasActionLog($t7['newActionLogs']->all(), 'handoff_to_human', 'executed'),
+            'Turn 7: handoff_to_human must be executed.'
+        );
+        $this->expectTrue(
+            $failures,
+            ! str_contains($t7Reply, 'kami bantu cek') && ! str_contains($t7Reply, 'ketersediaan jadwalnya'),
+            'Turn 7: reply must NOT claim to check availability when calendar is disabled.'
+        );
+        $this->expectTrue(
+            $failures,
+            str_contains($t7Reply, 'admin') || str_contains($t7Reply, 'teruskan') || str_contains($t7Reply, 'tim kami'),
+            'Turn 7: reply must be handoff message redirecting to admin.'
+        );
+
         $calendarHandoff = Handoff::query()
             ->where('tenant_id', $tenant->id)
             ->where('reason_code', 'calendar_unavailable')
@@ -300,35 +322,7 @@ class ConversationLogChatRegressionTest extends TestCase
         $this->expectTrue(
             $failures,
             $calendarHandoff instanceof Handoff,
-            'Turn 6: handoff record with reason_code=calendar_unavailable must exist.'
-        );
-
-        // --- Turn 7: provide_date, agent_mode=handoff → auto-reply diblokir ---
-        // Setelah handoff di turn 6, turn 7 masih diproses tapi tidak ada auto-reply.
-        // event_date_iso tetap dipersistensi ke state (Bug 2 fix tetap bekerja).
-        $t7 = $results[7];
-        $t7State    = $t7['state'];
-        $t7TraceMeta = (array) ($t7['inboundTurnTrace']?->meta ?? []);
-
-        // event_date_iso harus tersimpan ke state meski auto-reply diblokir (Bug 2 fix)
-        $this->expectTrue(
-            $failures,
-            ($t7State?->event_date_iso ?? null) === '2026-05-30',
-            'Turn 7: event_date_iso=2026-05-30 must be persisted to conversation_states even when agent_mode=handoff.'
-        );
-
-        // Auto-reply harus diblokir karena agent_mode=handoff
-        $this->expectTrue(
-            $failures,
-            ($t7TraceMeta['reply_dispatch']['status'] ?? null) === 'skipped',
-            'Turn 7: reply_dispatch must be skipped because agent_mode=handoff.'
-        );
-
-        // Tidak ada outbound message baru di turn 7
-        $this->expectTrue(
-            $failures,
-            $t7['newOutbounds']->isEmpty(),
-            'Turn 7: no new outbound messages must be sent when agent_mode=handoff.'
+            'Turn 7: handoff record with reason_code=calendar_unavailable must exist.'
         );
 
         $message = $failures === []
@@ -576,6 +570,223 @@ class ConversationLogChatRegressionTest extends TestCase
             : "Photo wedding regression assertions failed:\n- " . implode("\n- ", $failures);
 
         $this->assertSame([], $failures, $message);
+    }
+
+    /**
+     * Setelah handoff di-resolve dan AI di-resume, chat berikutnya harus dibalas AI
+     * dan tidak memicu handoff baru (bug: active_goal='booking' tersisa + calendarCheck catch-all).
+     */
+    public function test_after_handoff_resolve_resume_ai_normal_chat_gets_reply(): void
+    {
+        Queue::fake();
+
+        $this->bindFeatureGate(leadLimit: 0, automationEnabled: true, calendarAccess: false);
+
+        // Hanya 1 LLM call untuk pesan greeting setelah resume AI
+        $this->bindLlmJsonSequence([
+            '{"intent":"greeting","confidence":0.97,"entities":{}}',
+        ]);
+
+        $tenant = Tenant::query()->create([
+            'name'      => 'Tenant Resume AI Test',
+            'slug'      => 'tenant-resume-ai-test',
+            'is_active' => true,
+        ]);
+
+        $account = WaAccount::query()->create([
+            'tenant_id'    => $tenant->id,
+            'provider'     => 'meta',
+            'provider_ref' => 'acct-resume-ai',
+            'phone'        => '+6282200000001',
+            'status'       => 'connected',
+            'last_payload' => ['event' => 'connected'],
+        ]);
+
+        $session = WaSession::query()->create([
+            'tenant_id'    => $tenant->id,
+            'wa_account_id' => $account->id,
+            'provider'     => 'meta',
+            'provider_ref' => 'sess-resume-ai',
+            'status'       => 'active',
+            'last_payload' => ['event' => 'active'],
+        ]);
+
+        $this->seedLogChatKnowledgeAndAssets($tenant);
+
+        // Simulasikan kondisi pasca-resumeAi:
+        // Conversation sudah ada dengan agent_mode='assistant' tapi active_goal='booking' masih tersisa
+        $conversation = Conversation::query()->create([
+            'tenant_id'     => $tenant->id,
+            'wa_account_id' => $account->id,
+            'customer_phone' => '6282200000001',
+            'status'        => 'open',
+            'current_stage' => 'booking_requested',
+            'active_goal'   => 'booking',
+            'agent_mode'    => 'assistant',
+            'memory_mode'   => 'short',
+        ]);
+
+        ConversationState::query()->create([
+            'tenant_id'       => $tenant->id,
+            'conversation_id' => $conversation->id,
+            'current_stage'   => 'booking_requested',
+            'active_goal'     => 'booking',
+            'customer_name'   => 'Aris Egi Saputra',
+            'event_type'      => 'wedding',
+            'event_date_iso'  => '2026-05-30',
+            'agent_mode'      => 'assistant',
+            'memory_mode'     => 'short',
+            'retention_policy' => 'standard',
+        ]);
+
+        // Tidak ada handoff sebelum pesan dikirim
+        $this->assertSame(0, Handoff::query()->where('tenant_id', $tenant->id)->count());
+
+        $inbound = WaInboundMessage::query()->create([
+            'tenant_id'          => $tenant->id,
+            'wa_account_id'      => $account->id,
+            'wa_session_id'      => $session->id,
+            'provider'           => 'meta',
+            'provider_message_id' => 'resume-ai-greeting-1',
+            'from'               => '+6282200000001',
+            'to'                 => '+6289999999999',
+            'message_type'       => 'text',
+            'message_timestamp'  => now()->addSeconds(1),
+            'payload'            => ['message' => ['conversation' => 'halo ka']],
+            'meta'               => ['scenario' => 'resume_ai_test'],
+        ]);
+
+        $orchestrator = app(WaInboundTurnOrchestratorService::class);
+        $orchestrator->process($tenant, $inbound);
+
+        $state = ConversationState::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('conversation_id', $conversation->id)
+            ->firstOrFail();
+
+        $outboundCount = WaOutboundMessage::query()->where('tenant_id', $tenant->id)->count();
+        $handoffCount  = Handoff::query()->where('tenant_id', $tenant->id)->count();
+        $trace         = DecisionTrace::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('trace_key', 'inbound_turn')
+            ->latest('id')
+            ->first();
+
+        $failures = [];
+
+        $this->expectTrue($failures, $outboundCount >= 1,
+            'Setelah resume AI, pesan user harus dibalas (WaOutboundMessage harus ada).');
+
+        $this->expectTrue($failures, $handoffCount === 0,
+            'Setelah resume AI, greeting tidak boleh memicu handoff baru.');
+
+        $this->expectTrue($failures, $state->agent_mode === 'assistant',
+            'agent_mode harus tetap assistant setelah membalas greeting.');
+
+        $replyText = mb_strtolower((string) ($trace?->final_reply ?? ''));
+        $this->expectTrue($failures, ! str_contains($replyText, 'kami teruskan ke admin'),
+            'Reply tidak boleh berupa pesan handoff untuk greeting biasa.');
+
+        $message = $failures === []
+            ? ''
+            : "Resume AI regression assertions failed:\n- " . implode("\n- ", $failures);
+
+        $this->assertSame([], $failures, $message);
+    }
+
+    /**
+     * Regression: LLM returns "photo dan video" / "photo and video" (connector words) instead of
+     * an exact alias. normalizeLookupComparisonText must strip connectors so both forms resolve
+     * to "photo video" and match the seeded alias — not the deflection message.
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('connectorPackageQueryProvider')]
+    public function test_ask_package_detail_with_connector_word_matches_alias(string $packageQuery): void
+    {
+        Queue::fake();
+
+        $this->bindFeatureGate(leadLimit: 0, automationEnabled: true, calendarAccess: false);
+
+        $this->bindLlmJsonSequence([
+            json_encode(['intent' => 'ask_package_detail', 'confidence' => 0.93, 'entities' => ['package_query' => $packageQuery]]),
+        ]);
+
+        $hash = substr(md5($packageQuery), 0, 8);
+
+        $tenant = Tenant::query()->create([
+            'name'      => 'Tenant Test Connector',
+            'slug'      => 'tenant-connector-' . $hash,
+            'is_active' => true,
+        ]);
+
+        $account = WaAccount::query()->create([
+            'tenant_id'    => $tenant->id,
+            'provider'     => 'meta',
+            'provider_ref' => 'acct-connector-' . $hash,
+            'phone'        => '+6281234599999',
+            'status'       => 'connected',
+            'last_payload' => ['event' => 'connected'],
+        ]);
+
+        $session = WaSession::query()->create([
+            'tenant_id'     => $tenant->id,
+            'wa_account_id' => $account->id,
+            'provider'      => 'meta',
+            'provider_ref'  => 'sess-connector-' . $hash,
+            'status'        => 'active',
+            'last_payload'  => ['event' => 'active'],
+        ]);
+
+        $this->seedLogChatKnowledgeAndAssets($tenant);
+
+        $inbound = WaInboundMessage::query()->create([
+            'tenant_id'           => $tenant->id,
+            'wa_account_id'       => $account->id,
+            'wa_session_id'       => $session->id,
+            'provider'            => 'meta',
+            'provider_message_id' => 'connector-turn-' . $hash,
+            'from'                => '+6281234599999',
+            'to'                  => '+6289876543210',
+            'message_type'        => 'text',
+            'message_timestamp'   => now(),
+            'payload'             => ['message' => ['conversation' => 'boleh tau detail untuk photo dan video nya ka']],
+            'meta'                => ['scenario' => 'connector'],
+        ]);
+
+        $orchestrator = app(WaInboundTurnOrchestratorService::class);
+        $orchestrator->process($tenant, $inbound);
+
+        $trace = DecisionTrace::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('trace_key', 'inbound_turn')
+            ->latest('id')
+            ->firstOrFail();
+
+        $reply = mb_strtolower((string) ($trace->final_reply ?? ''));
+
+        $this->assertStringContainsString(
+            'detail photo+video',
+            $reply,
+            'reply must contain actual package detail, not the deflection message'
+        );
+
+        $this->assertStringNotContainsString(
+            'langsung ditanyakan ke tim kami',
+            $reply,
+            'deflection response must NOT appear when package detail can be resolved'
+        );
+    }
+
+    /**
+     * @return array<string,array{string}>
+     */
+    public static function connectorPackageQueryProvider(): array
+    {
+        return [
+            'indonesian dan'       => ['photo dan video'],
+            'english and'          => ['photo and video'],
+            'dengan suffix nya'    => ['photo dan video nya'],
+            'english and wedding'  => ['photo and video wedding'],
+        ];
     }
 
     // --- Helpers ---

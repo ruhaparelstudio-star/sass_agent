@@ -21,6 +21,15 @@ class TurnPipelineService
     private const COMPACT_VALUE_MAX_CHARS = 80;
     private const COMPACT_BLOCK_MAX_CHARS = 320;
 
+    /** @var list<string> */
+    private const TRAILING_FILLER_WORDS = ['ka', 'kak', 'kakak', 'dong', 'ya', 'yah', 'nya'];
+
+    /** @var list<string> */
+    private const CONNECTOR_WORDS = ['dan', 'atau', 'dengan', 'and', 'or', 'with'];
+
+    /** @var list<string> */
+    private const CALENDAR_RELATED_BLOCKERS = ['missing_availability_check', 'grounding_calendar_missing_source'];
+
     public function __construct(
         private readonly InterpretationService $interpretationService,
         private readonly ActionDispatcherService $actionDispatcherService,
@@ -943,9 +952,11 @@ class TurnPipelineService
         }
 
         $tokens = explode(' ', $normalized);
-        while ($tokens !== [] && in_array(end($tokens), ['ka', 'kak', 'kakak', 'dong', 'ya', 'yah'], true)) {
+        while ($tokens !== [] && in_array(end($tokens), self::TRAILING_FILLER_WORDS, true)) {
             array_pop($tokens);
         }
+
+        $tokens = array_values(array_filter($tokens, fn (string $t): bool => ! in_array($t, self::CONNECTOR_WORDS, true)));
 
         return implode(' ', $tokens);
     }
@@ -1248,8 +1259,19 @@ class TurnPipelineService
                 ];
             }
 
-            // Handoff jika kalender belum dikonfigurasi saat user ingin booking
-            if (is_array($calendarCheck)
+            $blocked = $candidates['blocked'] ?? [];
+            $blockedReasons = $blocked !== [] && is_array($blocked[0]['reasons'] ?? null)
+                ? $blocked[0]['reasons']
+                : [];
+
+            $hasNonCalendarBlockers = array_filter(
+                $blockedReasons,
+                fn ($r) => ! in_array($r, self::CALENDAR_RELATED_BLOCKERS, true)
+            ) !== [];
+
+            // Handoff jika kalender belum dikonfigurasi, tapi hanya saat data booking lain sudah lengkap
+            if (! $hasNonCalendarBlockers
+                && is_array($calendarCheck)
                 && ($calendarCheck['checked'] ?? false) === false
                 && in_array($calendarCheck['reason'] ?? null, ['calendar_integration_disabled'], true)
             ) {
@@ -1259,11 +1281,6 @@ class TurnPipelineService
                     'priority' => 'high',
                 ];
             }
-
-            $blocked = $candidates['blocked'] ?? [];
-            $blockedReasons = is_array($blocked) && is_array($blocked[0]['reasons'] ?? null)
-                ? $blocked[0]['reasons']
-                : [];
 
             if (in_array('grounding_calendar_missing_source', $blockedReasons, true)) {
                 return [
@@ -1308,28 +1325,21 @@ class TurnPipelineService
             ];
         }
 
-        $calendarCheck = $context['calendar_check'] ?? null;
-        if (is_array($calendarCheck)
-            && (($calendarCheck['checked'] ?? false) === true)
-            && (($calendarCheck['available'] ?? false) === false)
-        ) {
-            return [
-                'required' => true,
-                'reason_code' => 'calendar_unavailable',
-                'priority' => 'high',
-            ];
-        }
-
-        // Handoff jika kalender belum dikonfigurasi admin
-        if (is_array($calendarCheck)
-            && ($calendarCheck['checked'] ?? false) === false
-            && in_array($calendarCheck['reason'] ?? null, ['calendar_integration_disabled'], true)
-        ) {
-            return [
-                'required' => true,
-                'reason_code' => 'calendar_unavailable',
-                'priority' => 'high',
-            ];
+        if ($intent === Intent::AskAvailability) {
+            $calendarCheck = $context['calendar_check'] ?? null;
+            if (is_array($calendarCheck)) {
+                $checkedAndUnavailable = ($calendarCheck['checked'] ?? false) === true
+                    && ($calendarCheck['available'] ?? false) === false;
+                $calendarDisabled = ($calendarCheck['checked'] ?? false) === false
+                    && in_array($calendarCheck['reason'] ?? null, ['calendar_integration_disabled'], true);
+                if ($checkedAndUnavailable || $calendarDisabled) {
+                    return [
+                        'required' => true,
+                        'reason_code' => 'calendar_unavailable',
+                        'priority' => 'high',
+                    ];
+                }
+            }
         }
 
         if ($confidence < self::LOW_CONFIDENCE_THRESHOLD && (($context['force_handoff_on_low_confidence'] ?? false) === true)) {

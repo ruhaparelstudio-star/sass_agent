@@ -732,6 +732,61 @@ class TurnPipelineServiceTest extends TestCase
         $this->assertSame('high', $result['handoff_priority']);
     }
 
+    public function test_greeting_with_calendar_unavailable_does_not_trigger_handoff(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        $this->bindLlmJson('{"intent":"greeting","confidence":0.97,"entities":{}}');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'halo ka',
+            'extract intent',
+            [
+                'calendar_check' => [
+                    'status' => 'blocked',
+                    'checked' => true,
+                    'available' => false,
+                    'reason' => 'calendar_unavailable',
+                    'source' => 'calendar_api',
+                ],
+            ]
+        );
+
+        $this->assertFalse($result['handoff_required'],
+            'Greeting with unavailable calendar must NOT trigger handoff — only AskAvailability should.');
+        $this->assertNull($result['handoff_reason_code']);
+    }
+
+    public function test_ask_availability_with_calendar_disabled_triggers_handoff(): void
+    {
+        [$tenant, $conversation] = $this->createConversation();
+
+        $this->bindLlmJson('{"intent":"ask_availability","confidence":0.91,"entities":{"event_date":"2026-12-21"}}');
+
+        $result = app(TurnPipelineService::class)->handle(
+            $tenant,
+            $conversation,
+            'apakah tanggal 21 desember 2026 masih tersedia?',
+            'extract intent',
+            [
+                'calendar_check' => [
+                    'status'    => 'blocked',
+                    'checked'   => false,
+                    'available' => false,
+                    'reason'    => 'calendar_integration_disabled',
+                    'source'    => 'policy',
+                ],
+            ]
+        );
+
+        $this->assertTrue($result['handoff_required'],
+            'AskAvailability with disabled calendar must trigger handoff — cannot claim availability without calendar.');
+        $this->assertSame('calendar_unavailable', $result['handoff_reason_code']);
+        $this->assertSame('high', $result['handoff_priority']);
+    }
+
     public function test_lead_limit_exhausted_triggers_handoff_signal_with_high_priority(): void
     {
         [$tenant, $conversation] = $this->createConversation();
