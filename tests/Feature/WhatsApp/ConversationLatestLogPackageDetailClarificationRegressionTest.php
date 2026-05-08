@@ -136,18 +136,16 @@ class ConversationLatestLogPackageDetailClarificationRegressionTest extends Test
         $this->assertNotSame('', trim($turn5Reply), 'Turn 5 final reply tidak boleh kosong.');
         $this->assertNotSame('', trim($turn6Reply), 'Turn 6 final reply tidak boleh kosong.');
 
-        // Turn 5: tanpa package_query, sistem harus minta klarifikasi paket
-        $this->assertStringContainsString(
-            'boleh sebutkan paket',
-            mb_strtolower($turn5Reply),
-            'Turn 5: tanpa package_query, sistem harus minta klarifikasi paket terlebih dahulu.'
-        );
-
-        // Turn 6: setelah user menyebut alias paket, sistem tidak boleh ulang prompt klarifikasi
+        // Turn 5: tanpa package_query, sistem belum boleh bocorkan detail item paket
         $this->assertStringNotContainsString(
-            'boleh sebutkan paket',
-            mb_strtolower($turn6Reply),
-            'Gap terdeteksi: turn klarifikasi masih mengulangi prompt "Boleh sebutkan paket" padahal user sudah menyebut paket.'
+            $item1,
+            $turn5Reply,
+            'Turn 5: tanpa package_query, sistem tidak boleh sudah menyebutkan item detail paket.'
+        );
+        $this->assertStringNotContainsString(
+            $item2,
+            $turn5Reply,
+            'Turn 5: tanpa package_query, sistem tidak boleh sudah menyebutkan item detail paket.'
         );
 
         // Turn 6 reply harus berbeda dari turn 5
@@ -170,7 +168,7 @@ class ConversationLatestLogPackageDetailClarificationRegressionTest extends Test
             sprintf('Turn 6 reply harus memuat minimal satu item paket dari seed dinamis ("%s" atau "%s").', $item1, $item2)
         );
 
-        // Verifikasi format reply sesuai kontrak aktual dari TurnPipelineService::buildResponsePlanMessage()
+        // Verifikasi format reply sesuai kontrak ResponseComposerService (goal=package_explanation)
         $expectedReply = sprintf('Untuk %s, detail photo+video-nya %s, %s.', $pkgName, $item1, $item2);
         $this->assertSame(
             $expectedReply,

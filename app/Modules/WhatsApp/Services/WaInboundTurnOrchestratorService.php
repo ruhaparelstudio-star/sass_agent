@@ -17,6 +17,7 @@ use App\Modules\Conversation\Services\ConversationService;
 use App\Modules\Conversation\Services\ConversationSummaryService;
 use App\Modules\CoreEngine\Services\TurnPipelineService;
 use App\Modules\DataKnowledge\Services\CatalogResolver;
+use App\Modules\DataKnowledge\Services\FaqResolver;
 use App\Modules\DataKnowledge\Services\PricelistAssetResolver;
 use App\Modules\Plans\Services\FeatureGateService;
 use App\Modules\Plans\Services\MonthlyUniqueLeadLimitService;
@@ -83,6 +84,11 @@ Entity rules:
 - correction: true if user is correcting a previously stated entity
 - corrected_fields: array of entity keys being corrected (e.g. ["event_date", "customer_name"])
 
+Entity continuity (IMPORTANT):
+- The CONTEXT_COMPACT block below shows entities already known from prior turns.
+- DO NOT return null for an entity field that is already present in the live state unless the user is explicitly correcting it.
+- Re-emit known entity values as-is in your output so downstream state stays consistent.
+
 If unsure: set intent="unknown", confidence=0.0, keep entities null/false/[].
 TEXT;
 
@@ -109,6 +115,7 @@ TEXT;
         private readonly ActionDispatcherService $actionDispatcherService,
         private readonly CalendarAvailabilityService $calendarAvailabilityService,
         private readonly CatalogResolver $catalogResolver,
+        private readonly FaqResolver $faqResolver,
         private readonly PricelistAssetResolver $pricelistAssetResolver,
         private readonly FeatureGateService $featureGateService,
         private readonly MonthlyUniqueLeadLimitService $monthlyUniqueLeadLimitService,
@@ -499,6 +506,8 @@ TEXT;
         $catalog = $this->catalogResolver->resolveCatalog($tenant->id, now());
         $packageDetailLookup = $this->buildPackageDetailLookup($catalog);
         $pricelist = $this->pricelistAssetResolver->resolvePricelistAsset($tenant->id, now());
+        $faqList = $this->faqResolver->resolveFaq($tenant->id, now());
+        $faqMatch = $this->matchFaqAnswer($faqList, $userMessage);
         $previousBlockedAction = $this->resolvePreviousBlockedAction($tenant, $conversation);
 
         $grounding = [
@@ -506,7 +515,21 @@ TEXT;
             'package' => ['is_grounded' => $catalog !== [], 'source' => 'structured_catalog'],
             'file' => ['is_grounded' => $pricelist !== null, 'source' => 'tenant_asset'],
             'calendar' => ['is_grounded' => false, 'source' => 'calendar_unchecked'],
+            'faq' => [
+                'is_grounded' => $faqList !== [],
+                'source' => 'knowledge_faq',
+                'data' => ['items' => $faqList],
+            ],
         ];
+
+        if ($faqMatch !== null) {
+            $grounding['faq_match'] = [
+                'is_grounded' => true,
+                'source' => 'knowledge_faq',
+                'answer' => $faqMatch['answer'],
+                'question' => $faqMatch['question'],
+            ];
+        }
 
         $calendarCheckRequired = $this->shouldCheckCalendar($state->active_goal, $userMessage);
 
@@ -524,10 +547,8 @@ TEXT;
                 'message_hint' => mb_substr($userMessage, 0, 120),
                 'event_date_iso' => $state->event_date_iso,
             ]);
-            $isProviderError = ($calendarCheck['reason'] ?? null) === 'calendar_provider_error';
             $grounding['calendar'] = [
-                'is_grounded' => ($calendarCheck['checked'] === true && $calendarCheck['available'] === true)
-                    || $isProviderError,
+                'is_grounded' => $calendarCheck['checked'] === true && $calendarCheck['available'] === true,
                 'source' => $calendarCheck['source'],
                 'reason' => $calendarCheck['reason'],
             ];
@@ -546,6 +567,7 @@ TEXT;
             'dormant_retrieval' => $this->shouldTriggerDormantRetrieval($state, $userMessage),
             'previous_blocked_action' => $previousBlockedAction,
             'entities' => $this->buildPersistedEntityContext($state),
+            'catalog' => $catalog,
             'package_detail_lookup' => $packageDetailLookup,
             'pricelist_asset' => $pricelist,
             'delivery_channel' => [
@@ -734,6 +756,57 @@ TEXT;
      * @param  array<int,array<string,mixed>>  $catalog
      * @return array<string,array{package_name:string,items:array<int,string>}>
      */
+    /**
+     * Pick the best FAQ entry for the user message via simple keyword overlap.
+     *
+     * @param  list<array<string,mixed>>  $faqList
+     * @return array{question:string,answer:string}|null
+     */
+    private function matchFaqAnswer(array $faqList, string $userMessage): ?array
+    {
+        if ($faqList === []) {
+            return null;
+        }
+
+        $hint = mb_strtolower(trim($userMessage));
+        if ($hint === '') {
+            return null;
+        }
+
+        $hintTokens = array_values(array_filter(
+            preg_split('/\s+/u', preg_replace('/[^\p{L}\p{N}\s]/u', ' ', $hint) ?? '') ?: [],
+            static fn (string $token): bool => mb_strlen($token) >= 3
+        ));
+        if ($hintTokens === []) {
+            return null;
+        }
+
+        $bestScore = 0;
+        $best = null;
+        foreach ($faqList as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $question = mb_strtolower(trim((string) ($row['question'] ?? '')));
+            $answer = trim((string) ($row['answer'] ?? ''));
+            if ($question === '' || $answer === '') {
+                continue;
+            }
+            $score = 0;
+            foreach ($hintTokens as $token) {
+                if (str_contains($question, $token)) {
+                    $score++;
+                }
+            }
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $best = ['question' => $question, 'answer' => $answer];
+            }
+        }
+
+        return $best;
+    }
+
     private function buildPackageDetailLookup(array $catalog): array
     {
         $lookup = [];

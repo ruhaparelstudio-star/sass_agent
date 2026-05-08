@@ -8,6 +8,7 @@ use App\Models\ConversationState;
 use App\Models\Message;
 use App\Models\Tenant;
 use App\Modules\Lead\Services\LeadProfileService;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class ConversationService
@@ -151,6 +152,112 @@ class ConversationService
         ])->save();
 
         return $state;
+    }
+
+    /**
+     * Persist durable conversation state in a single transaction.
+     *
+     * Entities with non-empty values overwrite existing state columns; null/empty
+     * values are skipped (existing values preserved). $stateUpdate keys override
+     * stage/goal/pending_action explicitly.
+     *
+     * @param  array<string,mixed>  $entities
+     * @param  array<string,mixed>  $stateUpdate keys: current_stage, active_goal, pending_action
+     */
+    public function persistDurable(
+        Conversation $conversation,
+        Tenant $tenant,
+        array $entities,
+        array $stateUpdate = []
+    ): ConversationState {
+        $existsInTenant = Conversation::query()
+            ->whereKey($conversation->id)
+            ->where('tenant_id', $tenant->id)
+            ->exists();
+
+        if (! $existsInTenant) {
+            throw new HttpException(403, 'Forbidden tenant scope.');
+        }
+
+        return DB::transaction(function () use ($conversation, $tenant, $entities, $stateUpdate): ConversationState {
+            $state = ConversationState::query()
+                ->where('tenant_id', $tenant->id)
+                ->where('conversation_id', $conversation->id)
+                ->lockForUpdate()
+                ->first();
+
+            if (! $state) {
+                $state = new ConversationState([
+                    'tenant_id' => $tenant->id,
+                    'conversation_id' => $conversation->id,
+                    'current_stage' => 'new',
+                    'agent_mode' => 'assistant',
+                    'memory_mode' => 'short',
+                    'retention_policy' => 'standard',
+                ]);
+            }
+
+            $entityToColumn = [
+                'customer_name' => 'customer_name',
+                'event_type' => 'event_type',
+                'service_interest' => 'service_interest',
+                'package_interest' => 'package_interest',
+                'selected_package' => 'selected_package',
+                'event_date_iso' => 'event_date_iso',
+                'event_date_raw' => 'event_date_raw',
+                'location' => 'location',
+                'budget_min' => 'budget_min',
+                'budget_max' => 'budget_max',
+            ];
+
+            foreach ($entityToColumn as $entityKey => $column) {
+                if (! array_key_exists($entityKey, $entities)) {
+                    continue;
+                }
+                $value = $entities[$entityKey];
+                if (! $this->isPersistableValue($value)) {
+                    continue;
+                }
+                $state->{$column} = $value;
+            }
+
+            if (array_key_exists('current_stage', $stateUpdate) && is_string($stateUpdate['current_stage']) && $stateUpdate['current_stage'] !== '') {
+                $state->current_stage = $stateUpdate['current_stage'];
+            }
+            if (array_key_exists('active_goal', $stateUpdate)) {
+                $goal = $stateUpdate['active_goal'];
+                $state->active_goal = is_string($goal) && $goal !== '' ? $goal : null;
+            }
+            if (array_key_exists('pending_action', $stateUpdate)) {
+                $pending = $stateUpdate['pending_action'];
+                $state->pending_action = is_array($pending) && $pending !== [] ? $pending : null;
+            }
+
+            $state->save();
+
+            $conversation->forceFill([
+                'current_stage' => $state->current_stage,
+                'active_goal' => $state->active_goal,
+                'agent_mode' => $state->agent_mode,
+                'memory_mode' => $state->memory_mode,
+            ])->save();
+
+            return $state;
+        });
+    }
+
+    private function isPersistableValue(mixed $value): bool
+    {
+        if ($value === null) {
+            return false;
+        }
+        if (is_string($value) && trim($value) === '') {
+            return false;
+        }
+        if (is_array($value) && $value === []) {
+            return false;
+        }
+        return true;
     }
 
     /**

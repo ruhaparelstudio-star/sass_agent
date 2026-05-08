@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react'
+import React, { useEffect, useMemo } from 'react'
 import { router, useForm, usePage } from '@inertiajs/react'
 import TenantLayout from '../../layouts/TenantLayout'
 import {
@@ -355,11 +355,14 @@ function ProductStep({ form, catalogs, rows, onSubmit, disabled }) {
   return (
     <div className="grid gap-5 lg:grid-cols-2">
       <form className="space-y-4" onSubmit={onSubmit}>
-        <Field label="Katalog Layanan" required hint="Pilih katalog yang menjadi induk produk ini.">
-          <SelectInput value={form.data.service_catalog_id} onChange={(e) => form.setData('service_catalog_id', e.target.value)} disabled={disabled}>
+        <Field label="Katalog Layanan" required error={form.errors.service_catalog_id} hint="Pilih katalog yang menjadi induk produk ini.">
+          <SelectInput value={form.data.service_catalog_id} onChange={(e) => form.setData('service_catalog_id', e.target.value)} disabled={disabled || catalogs.length === 0}>
             {catalogs.length === 0
-              ? <option value="">Belum ada katalog</option>
-              : catalogs.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)
+              ? <option value="">Belum ada katalog — tambahkan katalog terlebih dahulu</option>
+              : <>
+                  <option value="">— Pilih katalog —</option>
+                  {catalogs.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </>
             }
           </SelectInput>
         </Field>
@@ -386,11 +389,14 @@ function PackageStep({ form, products, rows, onSubmit, disabled }) {
   return (
     <div className="grid gap-5 lg:grid-cols-2">
       <form className="space-y-4" onSubmit={onSubmit}>
-        <Field label="Produk" required hint="Paket ini masuk ke produk mana?">
-          <SelectInput value={form.data.product_id} onChange={(e) => form.setData('product_id', e.target.value)} disabled={disabled}>
+        <Field label="Produk" required error={form.errors.product_id} hint="Paket ini masuk ke produk mana?">
+          <SelectInput value={form.data.product_id} onChange={(e) => form.setData('product_id', e.target.value)} disabled={disabled || products.length === 0}>
             {products.length === 0
-              ? <option value="">Belum ada produk</option>
-              : products.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)
+              ? <option value="">Belum ada produk — tambahkan produk terlebih dahulu</option>
+              : <>
+                  <option value="">— Pilih produk —</option>
+                  {products.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </>
             }
           </SelectInput>
         </Field>
@@ -426,10 +432,13 @@ function PackageItemsStep({ form, packages, rows, onSubmit, disabled }) {
           Item paket adalah fasilitas yang termasuk dalam satu paket. AI akan menyebutnya saat menjelaskan paket kepada prospek. Contoh: "2 Fotografer", "Album Premium 20 hlm", "Drone shoot".
         </HintBox>
         <Field label="Paket" required error={form.errors.package_id} hint="Tambahkan item ke paket mana?">
-          <SelectInput value={form.data.package_id} onChange={(e) => form.setData('package_id', e.target.value)} disabled={disabled}>
+          <SelectInput value={form.data.package_id} onChange={(e) => form.setData('package_id', e.target.value)} disabled={disabled || packages.length === 0}>
             {packages.length === 0
-              ? <option value="">Belum ada paket</option>
-              : packages.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)
+              ? <option value="">Belum ada paket — tambahkan paket terlebih dahulu</option>
+              : <>
+                  <option value="">— Pilih paket —</option>
+                  {packages.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </>
             }
           </SelectInput>
         </Field>
@@ -484,9 +493,15 @@ function PricingStep({ priceForm, discountForm, packages, prices, discounts, dis
             <Tag className="h-4 w-4 text-emerald-500" /> Tambah Harga
           </h3>
           <form className="space-y-3" onSubmit={onSubmitPrice}>
-            <Field label="Paket" required>
-              <SelectInput value={priceForm.data.package_id} onChange={(e) => priceForm.setData('package_id', e.target.value)} disabled={disabled}>
-                {packages.length === 0 ? <option value="">Belum ada paket</option> : packages.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            <Field label="Paket" required error={priceForm.errors.package_id}>
+              <SelectInput value={priceForm.data.package_id} onChange={(e) => priceForm.setData('package_id', e.target.value)} disabled={disabled || packages.length === 0}>
+                {packages.length === 0
+                  ? <option value="">Belum ada paket — tambahkan paket terlebih dahulu</option>
+                  : <>
+                      <option value="">— Pilih paket —</option>
+                      {packages.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                    </>
+                }
               </SelectInput>
             </Field>
             <Field label="Label Harga" required error={priceForm.errors.label} hint='Contoh: "Harga Normal", "Early Bird"'>
@@ -510,9 +525,15 @@ function PricingStep({ priceForm, discountForm, packages, prices, discounts, dis
             <Percent className="h-4 w-4 text-amber-500" /> Tambah Diskon
           </h3>
           <form className="space-y-3" onSubmit={onSubmitDiscount}>
-            <Field label="Paket" required>
-              <SelectInput value={discountForm.data.package_id} onChange={(e) => discountForm.setData('package_id', e.target.value)} disabled={disabled}>
-                {packages.length === 0 ? <option value="">Belum ada paket</option> : packages.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            <Field label="Paket" required error={discountForm.errors.package_id}>
+              <SelectInput value={discountForm.data.package_id} onChange={(e) => discountForm.setData('package_id', e.target.value)} disabled={disabled || packages.length === 0}>
+                {packages.length === 0
+                  ? <option value="">Belum ada paket — tambahkan paket terlebih dahulu</option>
+                  : <>
+                      <option value="">— Pilih paket —</option>
+                      {packages.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                    </>
+                }
               </SelectInput>
             </Field>
             <Field label="Nama Diskon" required error={discountForm.errors.name} hint='Contoh: "Promo Ramadan 20%"'>
@@ -1031,6 +1052,32 @@ export default function BusinessData({ data, assets, discountTypes = ['percentag
     end_time: businessHoursPolicy.end_time ?? '17:00',
     days: Array.isArray(businessHoursPolicy.days) && businessHoursPolicy.days.length ? businessHoursPolicy.days : ['mon','tue','wed','thu','fri'],
   })
+
+  // Inertia's useForm initializes once. When a parent list (catalogs/products/packages) was
+  // empty on first render but later gets populated, the default <select> value stays empty —
+  // the dropdown VISUALLY shows the first option but submits an empty string, which fails
+  // the `required` rule silently. Sync the form's foreign-key field whenever the list grows.
+  useEffect(() => {
+    if (!productForm.data.service_catalog_id && catalogs[0]?.id) {
+      productForm.setData('service_catalog_id', String(catalogs[0].id))
+    }
+  }, [catalogs])
+  useEffect(() => {
+    if (!packageForm.data.product_id && products[0]?.id) {
+      packageForm.setData('product_id', String(products[0].id))
+    }
+  }, [products])
+  useEffect(() => {
+    if (!packageItemForm.data.package_id && packages[0]?.id) {
+      packageItemForm.setData('package_id', String(packages[0].id))
+    }
+    if (!priceForm.data.package_id && packages[0]?.id) {
+      priceForm.setData('package_id', String(packages[0].id))
+    }
+    if (!discountForm.data.package_id && packages[0]?.id) {
+      discountForm.setData('package_id', String(packages[0].id))
+    }
+  }, [packages])
 
   const submitCatalog       = (e) => { e.preventDefault(); catalogForm.post('/tenant/business-data/service-catalogs', { preserveScroll: true, onSuccess: () => catalogForm.reset() }) }
   const submitProduct       = (e) => { e.preventDefault(); productForm.post('/tenant/business-data/products', { preserveScroll: true, onSuccess: () => productForm.reset('name', 'description', 'sort_order') }) }

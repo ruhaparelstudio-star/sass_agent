@@ -7,9 +7,12 @@ use App\Models\CalendarConnection;
 use App\Models\CalendarSetting;
 use App\Models\Tenant;
 use App\Modules\Calendar\Contracts\CalendarAvailabilityProvider;
+use Illuminate\Support\Facades\Cache;
 
 class CalendarAvailabilityService
 {
+    private const SUCCESS_CACHE_TTL_SECONDS = 60;
+
     public function __construct(private readonly CalendarAvailabilityProvider $provider)
     {
     }
@@ -45,6 +48,14 @@ class CalendarAvailabilityService
             return $result;
         }
 
+        $cacheKey = $this->successCacheKey($tenant->id, $request);
+        $cached = Cache::get($cacheKey);
+        if (is_array($cached)) {
+            // Persist a fresh audit row even on cache hit so the trail stays complete.
+            $this->persistCheck($tenant, $connection, $request, $cached);
+            return $cached;
+        }
+
         try {
             $result = $this->provider->checkAvailability($tenant->id, $request);
         } catch (\Throwable) {
@@ -74,7 +85,20 @@ class CalendarAvailabilityService
 
         $this->persistCheck($tenant, $connection, $request, $normalized);
 
+        // Cache only confirmed-available successes — errors and disabled states must not be cached.
+        if ($normalized['checked'] === true && $normalized['available'] === true) {
+            Cache::put($cacheKey, $normalized, self::SUCCESS_CACHE_TTL_SECONDS);
+        }
+
         return $normalized;
+    }
+
+    /**
+     * @param  array<string,mixed>  $request
+     */
+    private function successCacheKey(int $tenantId, array $request): string
+    {
+        return 'calendar_avail:'.$tenantId.':'.md5((string) json_encode($request));
     }
 
     /**

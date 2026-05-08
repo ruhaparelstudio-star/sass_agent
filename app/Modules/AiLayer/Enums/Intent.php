@@ -18,6 +18,11 @@ enum Intent: string
     case ProvideBudget = 'provide_budget';
     case ProvidePreference = 'provide_preference';
     case BookingIntent = 'booking_intent';
+    case ConfirmBooking = 'confirm_booking';
+    case AskFaq = 'ask_faq';
+    case ObjectionPrice = 'objection_price';
+    case ObjectionTime = 'objection_time';
+    case ObjectionMisc = 'objection_misc';
     case RequestHandoff = 'request_handoff';
     case Complaint = 'complaint';
     case PaymentRelated = 'payment_related';
@@ -45,6 +50,15 @@ enum Intent: string
             'provide_budget_range' => self::ProvideBudget,
             'provide_needs' => self::ProvidePreference,
             'ask_booking_flow' => self::BookingIntent,
+            'ask_booking_link' => self::BookingIntent,
+            'ask_lock_date' => self::BookingIntent,
+            'confirm_book' => self::ConfirmBooking,
+            'booking_confirm' => self::ConfirmBooking,
+            'faq' => self::AskFaq,
+            'ask_invoice' => self::PaymentRelated,
+            'objection' => self::ObjectionMisc,
+            'objection_pricing' => self::ObjectionPrice,
+            'objection_schedule' => self::ObjectionTime,
             'request_admin' => self::RequestHandoff,
             'handoff' => self::RequestHandoff,
             'payment' => self::PaymentRelated,

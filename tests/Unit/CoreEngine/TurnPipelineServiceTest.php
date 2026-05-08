@@ -848,7 +848,10 @@ class TurnPipelineServiceTest extends TestCase
         $this->assertSame('provide_name', $result['intent']);
         $this->assertFalse($result['handoff_required']);
         $this->assertFalse($result['notification_required']);
-        $this->assertSame('allow_action', $result['decision']);
+        // Goal-driven: provide_name leads into qualification with the next-required field set,
+        // so the decision keyword reflects an information request rather than allow_action.
+        $this->assertSame('ask_missing_required_info', $result['decision']);
+        $this->assertSame('qualification', $result['active_goal']);
     }
 
     public function test_provide_name_resumes_blocked_pricelist_flow_and_requests_event_type_before_file_send(): void

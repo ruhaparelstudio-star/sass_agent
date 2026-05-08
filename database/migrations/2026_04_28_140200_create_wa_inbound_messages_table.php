@@ -23,7 +23,7 @@ return new class extends Migration
             $table->json('meta')->nullable();
             $table->timestamps();
 
-            $table->unique(['tenant_id', 'provider', 'provider_message_id']);
+            $table->unique(['tenant_id', 'provider', 'provider_message_id'], 'wa_inbound_msgs_tenant_provider_msg_id_unique');
             $table->index(['tenant_id', 'wa_account_id']);
             $table->index(['tenant_id', 'wa_session_id']);
             $table->index(['tenant_id', 'message_timestamp']);

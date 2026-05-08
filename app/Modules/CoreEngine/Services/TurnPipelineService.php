@@ -10,6 +10,7 @@ use App\Models\Tenant;
 use App\Modules\AiLayer\Enums\Intent;
 use App\Modules\AiLayer\Services\InterpretationService;
 use App\Modules\Action\Services\ActionDispatcherService;
+use App\Modules\Conversation\Services\ConversationService;
 use App\Modules\Validation\Contracts\ActionPermissionValidator;
 use App\Modules\Validation\Contracts\GroundingValidator;
 use App\Modules\Validation\Contracts\ModeValidator;
@@ -37,6 +38,8 @@ class TurnPipelineService
         private readonly GroundingValidator $groundingValidator,
         private readonly ActionPermissionValidator $actionPermissionValidator,
         private readonly ModeValidator $modeValidator,
+        private readonly ResponseComposerService $responseComposer,
+        private readonly ConversationService $conversationService,
     ) {}
 
     public function handle(
@@ -64,16 +67,18 @@ class TurnPipelineService
             $context
         );
 
-        $updatedGoal = $this->goalFromIntent($finalIntent);
-        if ($updatedGoal !== null && $updatedGoal !== $state->active_goal) {
-            // Never regress from booking to qualification — providing data mid-booking doesn't cancel intent
-            if (! ($state->active_goal === 'booking' && $updatedGoal === 'qualification')) {
-                $state->active_goal = $updatedGoal;
-                $state->save();
-                $conversation->forceFill([
-                    'active_goal' => $state->active_goal,
-                ])->save();
-            }
+        $resolvedGoal = $this->resolveGoal($finalIntent, $state->active_goal);
+        $previousActiveGoal = $state->active_goal;
+        // Resuming a blocked pricelist flow promotes goal to pricing (composer uses goal-driven templates).
+        if ($this->shouldResumePricelistFlow($finalIntent, $entities, $context)) {
+            $resolvedGoal = 'pricing';
+        }
+        // Never regress from booking to qualification — providing data mid-booking doesn't cancel intent
+        $effectiveGoal = ($previousActiveGoal === 'booking' && $resolvedGoal === 'qualification')
+            ? $previousActiveGoal
+            : $resolvedGoal;
+        if ($effectiveGoal !== $previousActiveGoal) {
+            $state->active_goal = $effectiveGoal;
         }
 
         $leadProfile = LeadProfile::query()
@@ -168,6 +173,41 @@ class TurnPipelineService
         );
         $handoffRequired = $handoffSignal['required'];
 
+        $decisionForCompose = [
+            'intent' => $finalIntent->value,
+            'active_goal' => $state->active_goal,
+            'allowed_actions' => $allowedActions,
+            'blocked_actions' => $blockedActions,
+            'action_candidates' => $result,
+        ];
+        $groundingForCompose = is_array($context['grounding'] ?? null) ? $context['grounding'] : [];
+        // Surface package detail summary into the grounding payload so the composer
+        // can render package_explanation goals without reaching back into raw context.
+        // Resolve via existing helper which understands both direct summary and lookup tables.
+        $packageSummary = $this->resolvePackageDetailSummary($context, $entities);
+        if ($packageSummary !== null) {
+            $groundingForCompose['package_summary'] = $packageSummary;
+        }
+        $composedMessage = $this->responseComposer->compose(
+            $decisionForCompose,
+            $groundingForCompose,
+            $entities,
+            $tenant
+        );
+
+        // Persist durable state in a single transaction at the end of the turn.
+        $pendingAction = $this->derivePendingAction($candidate, $result);
+        $this->conversationService->persistDurable(
+            $conversation,
+            $tenant,
+            $entities,
+            [
+                'current_stage' => $state->current_stage,
+                'active_goal' => $state->active_goal,
+                'pending_action' => $pendingAction,
+            ]
+        );
+
         $response = [
             'intent' => $finalIntent->value,
             'confidence' => $interpretation->confidence,
@@ -191,7 +231,7 @@ class TurnPipelineService
             ],
             'action_candidates' => $result,
             'response_plan' => [
-                'message' => $this->buildResponsePlanMessage($finalIntent, $result, $tenant, $entities, $context),
+                'message' => $composedMessage,
             ],
             'trace' => [
                 'executed' => $dispatchTrace['executed'],
@@ -533,6 +573,11 @@ class TurnPipelineService
         ];
     }
 
+    /**
+     * Deterministic precedence: state-loaded entities (previous) are source of truth.
+     * Current LLM-extracted entities only fill gaps where previous is null/empty,
+     * unless a correction is explicitly signaled.
+     */
     private function mergeEntities(array $previous, array $current): array
     {
         $merged = is_array($previous) ? $previous : [];
@@ -546,7 +591,10 @@ class TurnPipelineService
                 continue;
             }
 
-            $merged[$key] = $value;
+            // Only apply current value if previous is missing/empty.
+            if (! array_key_exists($key, $merged) || ! $this->shouldApplyCurrentEntityValue($merged[$key])) {
+                $merged[$key] = $value;
+            }
         }
 
         $isCorrection = ($current['is_correction'] ?? false) === true;
@@ -635,12 +683,371 @@ class TurnPipelineService
         return match ($intent) {
             Intent::AskPricelist,
             Intent::AskPrice => $this->buildPricelistCandidate($leadProfile, $entities, $context),
-            Intent::BookingIntent => $this->buildBookingCandidate($entities, $leadProfile, $context),
+            Intent::BookingIntent,
+            Intent::ConfirmBooking => $this->buildBookingCandidate($entities, $leadProfile, $context),
+            Intent::ProvideName,
+            Intent::ProvideEventType,
+            Intent::ProvideDate,
+            Intent::ProvideBudget,
+            Intent::ProvidePreference => $this->buildQualificationCandidate($entities, $leadProfile, $context),
+            Intent::Greeting,
+            Intent::FirstContact,
+            Intent::IntroInterest => $this->buildOpeningCandidate($intent),
+            Intent::AskPackage,
+            Intent::AskPackageDetail => $this->buildPackageExplanationCandidate($entities, $context),
+            Intent::AskAvailability => $this->buildAvailabilityCandidate($entities, $context),
+            Intent::AskFaq => $this->buildFaqCandidate($entities, $context),
+            Intent::ObjectionPrice,
+            Intent::ObjectionTime,
+            Intent::ObjectionMisc => $this->buildObjectionCandidate($intent),
+            Intent::RequestHandoff,
+            Intent::Complaint => $this->buildHandoffCandidate($intent),
+            Intent::PaymentRelated => $this->buildInvoicePhaseCandidate(),
+            Intent::UnclearMessage,
+            Intent::Unknown => $this->buildClarificationCandidate(),
             default => [
                 'action' => 'reply_safe_text',
                 'reasons' => [],
             ],
         };
+    }
+
+    private function buildOpeningCandidate(Intent $intent): array
+    {
+        return [
+            'action' => 'reply_safe_text',
+            'reasons' => [],
+            'meta' => [
+                'opening_phase' => $intent === Intent::Greeting ? 'greeting' : 'intro_interest',
+            ],
+        ];
+    }
+
+    /**
+     * @param  array<string,mixed>  $entities
+     * @param  array<string,mixed>  $context
+     */
+    private function buildPackageExplanationCandidate(array $entities, array $context): array
+    {
+        $summary = $this->resolvePackageDetailSummary($context, $entities);
+        if ($summary !== null) {
+            return [
+                'action' => 'reply_safe_text',
+                'reasons' => [],
+                'meta' => ['package_summary' => $summary],
+            ];
+        }
+
+        $packagesList = $this->resolvePackagesList($context);
+        if ($packagesList !== []) {
+            return [
+                'action' => 'reply_safe_text',
+                'reasons' => [],
+                'meta' => ['packages_list' => $packagesList],
+            ];
+        }
+
+        return [
+            'action' => 'reply_safe_text',
+            'reasons' => [],
+            'meta' => ['clarification_for' => 'package'],
+        ];
+    }
+
+    /**
+     * @param  array<string,mixed>  $entities
+     * @param  array<string,mixed>  $context
+     */
+    private function buildAvailabilityCandidate(array $entities, array $context): array
+    {
+        $eventDate = trim((string) ($entities['event_date_iso'] ?? ''));
+        if ($eventDate === '') {
+            return [
+                'action' => 'reply_safe_text',
+                'reasons' => ['missing_event_date'],
+            ];
+        }
+
+        $calendarCheck = $this->normalizeCalendarCheck($context['calendar_check'] ?? null);
+
+        if ($calendarCheck['checked'] === true && $calendarCheck['available'] === true) {
+            return [
+                'action' => 'reply_safe_text',
+                'reasons' => [],
+                'meta' => [
+                    'availability' => [
+                        'confirmed_date' => $eventDate,
+                        'status' => 'available',
+                    ],
+                ],
+            ];
+        }
+
+        if (($calendarCheck['reason'] ?? null) === 'calendar_provider_error') {
+            return [
+                'action' => 'reply_safe_text',
+                'reasons' => ['calendar_provider_error'],
+            ];
+        }
+
+        if ($calendarCheck['checked'] === true && $calendarCheck['available'] === false) {
+            return [
+                'action' => 'reply_safe_text',
+                'reasons' => ['calendar_unavailable'],
+                'meta' => [
+                    'availability' => [
+                        'requested_date' => $eventDate,
+                        'status' => 'unavailable',
+                    ],
+                ],
+            ];
+        }
+
+        return [
+            'action' => 'reply_safe_text',
+            'reasons' => ['missing_availability_check'],
+        ];
+    }
+
+    /**
+     * @param  array<string,mixed>  $entities
+     * @param  array<string,mixed>  $context
+     */
+    private function buildFaqCandidate(array $entities, array $context): array
+    {
+        $grounding = is_array($context['grounding'] ?? null) ? $context['grounding'] : [];
+        $match = $this->resolveFaqMatch($grounding, $entities);
+
+        if ($match !== null) {
+            return [
+                'action' => 'reply_safe_text',
+                'reasons' => [],
+                'meta' => ['faq_answer' => $match],
+            ];
+        }
+
+        return [
+            'action' => 'reply_safe_text',
+            'reasons' => ['missing_faq_match'],
+        ];
+    }
+
+    private function buildObjectionCandidate(Intent $intent): array
+    {
+        $type = match ($intent) {
+            Intent::ObjectionPrice => 'price',
+            Intent::ObjectionTime => 'time',
+            default => 'misc',
+        };
+
+        return [
+            'action' => 'reply_safe_text',
+            'reasons' => [],
+            'meta' => ['objection_type' => $type],
+        ];
+    }
+
+    private function buildHandoffCandidate(Intent $intent): array
+    {
+        return [
+            'action' => 'reply_safe_text',
+            'reasons' => [],
+            'meta' => [
+                'handoff_trigger' => $intent === Intent::Complaint ? 'complaint' : 'request',
+            ],
+        ];
+    }
+
+    private function buildInvoicePhaseCandidate(): array
+    {
+        return [
+            'action' => 'reply_safe_text',
+            'reasons' => [],
+            'meta' => ['invoice_phase' => 'route_to_human'],
+        ];
+    }
+
+    private function buildClarificationCandidate(): array
+    {
+        return [
+            'action' => 'reply_safe_text',
+            'reasons' => [],
+        ];
+    }
+
+    /**
+     * Top-N active package names from catalog grounding (no specific package query).
+     *
+     * @param  array<string,mixed>  $context
+     * @return list<string>
+     */
+    private function resolvePackagesList(array $context): array
+    {
+        $catalog = $context['catalog'] ?? null;
+        if (! is_array($catalog) || $catalog === []) {
+            return [];
+        }
+
+        $names = [];
+        foreach ($catalog as $service) {
+            if (! is_array($service)) {
+                continue;
+            }
+            foreach ((array) ($service['products'] ?? []) as $product) {
+                if (! is_array($product)) {
+                    continue;
+                }
+                foreach ((array) ($product['packages'] ?? []) as $package) {
+                    if (! is_array($package)) {
+                        continue;
+                    }
+                    $name = trim((string) ($package['name'] ?? ''));
+                    if ($name !== '' && ! in_array($name, $names, true)) {
+                        $names[] = $name;
+                    }
+                    if (count($names) >= 5) {
+                        return $names;
+                    }
+                }
+            }
+        }
+
+        return $names;
+    }
+
+    /**
+     * Pick the FAQ entry whose question best matches the user message hint.
+     *
+     * @param  array<string,mixed>  $grounding
+     * @param  array<string,mixed>  $entities
+     */
+    private function resolveFaqMatch(array $grounding, array $entities): ?string
+    {
+        $direct = $grounding['faq_match']['answer'] ?? ($grounding['faq']['data']['answer'] ?? null);
+        if (is_string($direct) && trim($direct) !== '') {
+            return trim($direct);
+        }
+
+        $faqList = $grounding['faq']['data']['items'] ?? ($grounding['faq_list'] ?? null);
+        if (! is_array($faqList) || $faqList === []) {
+            return null;
+        }
+
+        $hint = mb_strtolower(trim((string) ($entities['faq_query'] ?? ($entities['user_message_hint'] ?? ''))));
+        if ($hint === '') {
+            // No hint; surface the first FAQ as default.
+            $first = $faqList[0] ?? null;
+            $answer = is_array($first) ? trim((string) ($first['answer'] ?? '')) : '';
+            return $answer !== '' ? $answer : null;
+        }
+
+        foreach ($faqList as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $question = mb_strtolower(trim((string) ($row['question'] ?? '')));
+            if ($question === '') {
+                continue;
+            }
+            if (str_contains($question, $hint) || str_contains($hint, $question)) {
+                $answer = trim((string) ($row['answer'] ?? ''));
+                if ($answer !== '') {
+                    return $answer;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Compute next-required field from PRD §14 ordering and emit a structured
+     * reply candidate with `meta.next_required` so the composer can pick the
+     * exact prompt template.
+     */
+    private function buildQualificationCandidate(array $entities, ?LeadProfile $leadProfile, array $context): array
+    {
+        $next = $this->nextRequiredQualificationField($entities, $leadProfile);
+
+        if ($next === null) {
+            // All qualification fields filled — fall back to reply_text with no missing reasons.
+            return [
+                'action' => 'reply_text',
+                'reasons' => [],
+                'meta' => ['next_required' => null],
+            ];
+        }
+
+        return [
+            'action' => 'reply_text',
+            'reasons' => ['collect:'.$next],
+            'missing_required' => [$next],
+            'meta' => ['next_required' => $next],
+        ];
+    }
+
+    private function nextRequiredQualificationField(array $entities, ?LeadProfile $leadProfile): ?string
+    {
+        if (! $this->hasKnownCustomerName($leadProfile, $entities)) {
+            return 'customer_name';
+        }
+        if (! $this->hasKnownEventType($entities)) {
+            return 'event_type';
+        }
+        $eventDate = trim((string) ($entities['event_date_iso'] ?? ''));
+        if ($eventDate === '') {
+            return 'event_date';
+        }
+        $packageInterest = $this->firstNonEmptyString([
+            is_string($entities['package_interest'] ?? null) ? $entities['package_interest'] : null,
+            is_string($entities['resolved_package_name'] ?? null) ? $entities['resolved_package_name'] : null,
+            is_string($entities['package_query'] ?? null) ? $entities['package_query'] : null,
+        ]);
+        if ($packageInterest === null) {
+            return 'package_interest';
+        }
+
+        return null;
+    }
+
+    /**
+     * Build pending_action payload {action, reason, captured_at} for resume.
+     * Returns null if no resume-worthy blocked candidate is present.
+     */
+    private function derivePendingAction(array $candidate, array $result): ?array
+    {
+        $blocked = $result['blocked'] ?? [];
+        $allowed = $result['allowed'] ?? [];
+
+        // If an action was successfully allowed, clear pending.
+        if ($allowed !== []) {
+            return null;
+        }
+
+        if ($blocked === []) {
+            return null;
+        }
+
+        $first = $blocked[0];
+        $action = (string) ($first['action'] ?? '');
+        $reasons = is_array($first['reasons'] ?? null) ? $first['reasons'] : [];
+        $reason = (string) ($reasons[0] ?? '');
+
+        // Only resume-worthy actions
+        $resumeWorthy = ['send_file', 'send_pricelist_file', 'send_booking_link'];
+        if (! in_array($action, $resumeWorthy, true)) {
+            return null;
+        }
+
+        if ($reason === '') {
+            return null;
+        }
+
+        return [
+            'action' => $action,
+            'reason' => $reason,
+            'captured_at' => now()->toIso8601String(),
+        ];
     }
 
     private function buildPricelistCandidate(?LeadProfile $leadProfile, array $entities = [], array $context = []): array
@@ -707,101 +1114,6 @@ class TurnPipelineService
         }
 
         return $candidate;
-    }
-
-    private function buildResponsePlanMessage(Intent $intent, array $candidates, Tenant $tenant, array $entities = [], array $context = []): string
-    {
-        if ($intent === Intent::Greeting) {
-            $tenantName = trim((string) $tenant->name);
-            if ($tenantName === '') {
-                $tenantName = 'kami';
-            }
-
-            return sprintf('Perkenalkan saya asisten %s, ada yang bisa saya bantu?', $tenantName);
-        }
-
-        if ($intent === Intent::UnclearMessage) {
-            return 'Boleh ceritakan kebutuhan acara kakak dulu ya, misalnya paket, tanggal, atau budget.';
-        }
-
-        $allowedAction = (string) (($candidates['allowed'][0]['action'] ?? '') ?: '');
-        if ($allowedAction === 'send_file') {
-            return 'Ini pricelist terbaru kami ya kak, kalau ada yang kurang jelas boleh langsung ditanyakan.';
-        }
-
-        if (($candidates['blocked'] ?? []) === []) {
-            if ($intent === Intent::AskPackageDetail) {
-                $summary = $this->resolvePackageDetailSummary($context, $entities);
-                if ($summary !== null) {
-                    $packageName = trim((string) ($summary['package_name'] ?? 'Paket pilihan'));
-                    if ($packageName === '') {
-                        $packageName = 'Paket pilihan';
-                    }
-
-                    $itemSentence = $this->formatPackageItems($summary['items'] ?? []);
-
-                    return sprintf('Untuk %s, detail photo+video-nya %s.', $packageName, $itemSentence);
-                }
-
-                $namedPackage = trim((string) (
-                    $entities['resolved_package_name']
-                        ?? $entities['package_query']
-                        ?? $entities['package_interest']
-                        ?? ''
-                ));
-                if ($namedPackage !== '') {
-                    return sprintf(
-                        'Untuk paket %s, detail lengkapnya bisa langsung ditanyakan ke tim kami ya kak.',
-                        $namedPackage
-                    );
-                }
-
-                return 'Boleh sebutkan paket atau layanan yang mau dijelaskan detailnya ya kak?';
-            }
-
-            if ($intent === Intent::ProvideName) {
-                return 'Makasih kak, namanya sudah saya catat. Siap kak, kakak lagi cari layanan untuk acara apa ya?';
-            }
-
-            if ($intent === Intent::ProvideEventType) {
-                $hasName = ($entities['customer_name'] ?? null) !== null;
-                if (! $hasName) {
-                    return 'Siap kak, sudah dicatat. Sebelum kita lanjut, boleh tahu nama kakak?';
-                }
-
-                return 'Siap kak, informasinya sudah dicatat. Boleh share tanggal acaranya kak?';
-            }
-
-            if ($intent === Intent::ProvidePreference) {
-                return 'Siap kak, preferensinya sudah saya catat. Boleh share tanggal acaranya supaya saya bantu rekomendasi paket yang paling pas?';
-            }
-
-            return 'Terima kasih kak, boleh ceritakan kebutuhan acaranya biar saya bantu rekomendasi paket yang paling sesuai?';
-        }
-
-        $reasons = $candidates['blocked'][0]['reasons'] ?? [];
-
-        if (in_array('missing_name', $reasons, true)) {
-            return 'Sebelum kita lanjut, aku boleh tahu nama kakak?';
-        }
-
-        if (in_array('missing_event_type', $reasons, true)) {
-            return 'Siap kak, kakak lagi cari layanan untuk acara apa ya?';
-        }
-
-        if (in_array('missing_package', $reasons, true)) {
-            return 'Boleh info paket yang kakak minati dulu ya?';
-        }
-
-        if (in_array('missing_event_date', $reasons, true)) {
-            return 'Boleh share tanggal acara yang direncanakan ya kak?';
-        }
-
-        if (in_array('missing_availability_check', $reasons, true)) {
-            return 'Siap kak, kami bantu cek dulu ketersediaan jadwalnya ya.';
-        }
-
-        return 'Boleh dibantu lengkapi informasi yang masih kurang ya kak, supaya saya bisa lanjut bantu dengan tepat.';
     }
 
     private function shouldResumePricelistFlow(Intent $intent, array $entities, array $context): bool
@@ -1146,11 +1458,32 @@ class TurnPipelineService
     {
         return match ($intent) {
             Intent::AskPrice, Intent::AskPricelist => 'pricing',
-            Intent::BookingIntent => 'booking',
+            Intent::BookingIntent, Intent::ConfirmBooking => 'booking',
             Intent::AskAvailability => 'availability',
             Intent::ProvideName, Intent::ProvideDate, Intent::ProvideEventType, Intent::ProvideBudget, Intent::ProvidePreference => 'qualification',
+            Intent::Greeting, Intent::FirstContact, Intent::IntroInterest => 'opening',
+            Intent::AskPackage, Intent::AskPackageDetail => 'package_explanation',
+            Intent::AskFaq => 'faq',
+            Intent::ObjectionPrice, Intent::ObjectionTime, Intent::ObjectionMisc => 'objection_handling',
+            Intent::Complaint, Intent::RequestHandoff => 'handoff',
+            Intent::PaymentRelated => 'invoice_phase',
+            Intent::UnclearMessage, Intent::Unknown => 'clarification',
             default => null,
         };
+    }
+
+    /**
+     * Resolve final goal — for TopicSwitch/Correction, inherit previous goal.
+     */
+    private function resolveGoal(Intent $intent, ?string $previousGoal): string
+    {
+        if (in_array($intent, [Intent::TopicSwitch, Intent::Correction], true)) {
+            $prev = is_string($previousGoal) ? trim($previousGoal) : '';
+            return $prev !== '' ? $prev : 'clarification';
+        }
+
+        $goal = $this->goalFromIntent($intent);
+        return is_string($goal) && $goal !== '' ? $goal : 'clarification';
     }
 
     /**
@@ -1245,7 +1578,18 @@ class TurnPipelineService
             ];
         }
 
-        if ($intent === Intent::BookingIntent) {
+        if ($intent === Intent::BookingIntent || $intent === Intent::ConfirmBooking) {
+            $calendarCheck = $context['calendar_check'] ?? null;
+
+            // Calendar provider error is a hard handoff (not a free-pass to dispatch booking link).
+            if (is_array($calendarCheck) && ($calendarCheck['reason'] ?? null) === 'calendar_provider_error') {
+                return [
+                    'required' => true,
+                    'reason_code' => 'calendar_provider_error',
+                    'priority' => 'high',
+                ];
+            }
+
             $bookingLinkDispatched = (($dispatchTrace['action'] ?? null) === 'send_booking_link')
                 && (($dispatchTrace['status'] ?? null) === 'executed');
 
@@ -1257,11 +1601,9 @@ class TurnPipelineService
                 ];
             }
 
-            $calendarCheck = $context['calendar_check'] ?? null;
             if (is_array($calendarCheck)
                 && (($calendarCheck['checked'] ?? false) === true)
                 && (($calendarCheck['available'] ?? false) === false)
-                && ($calendarCheck['reason'] ?? null) !== 'calendar_provider_error'
             ) {
                 return [
                     'required' => true,
@@ -1339,6 +1681,13 @@ class TurnPipelineService
         if ($intent === Intent::AskAvailability) {
             $calendarCheck = $context['calendar_check'] ?? null;
             if (is_array($calendarCheck)) {
+                if (($calendarCheck['reason'] ?? null) === 'calendar_provider_error') {
+                    return [
+                        'required' => true,
+                        'reason_code' => 'calendar_provider_error',
+                        'priority' => 'high',
+                    ];
+                }
                 $checkedAndUnavailable = ($calendarCheck['checked'] ?? false) === true
                     && ($calendarCheck['available'] ?? false) === false;
                 $calendarDisabled = ($calendarCheck['checked'] ?? false) === false

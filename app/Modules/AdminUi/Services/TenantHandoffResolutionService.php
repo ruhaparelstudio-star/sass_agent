@@ -86,14 +86,13 @@ class TenantHandoffResolutionService
             throw new HttpException(409, 'Conversation state not found.');
         }
 
-        $state->agent_mode    = 'assistant';
-        $state->active_goal   = null;
-        $state->event_date_iso = null;
+        // Preserve qualification context (active_goal, event_date_iso, customer_name, etc.).
+        // Resuming AI must not erase what the customer told us — only flip mode back to assistant.
+        $state->agent_mode = 'assistant';
         $state->save();
 
         $conversation->forceFill([
-            'agent_mode'  => 'assistant',
-            'active_goal' => null,
+            'agent_mode' => 'assistant',
         ])->save();
     }
 }

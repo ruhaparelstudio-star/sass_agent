@@ -18,6 +18,10 @@ class ConversationState extends Model
         'package_interest',
         'selected_package',
         'event_date_iso',
+        'event_date_raw',
+        'location',
+        'budget_min',
+        'budget_max',
         'pending_action',
         'agent_mode',
         'memory_mode',
@@ -29,6 +33,9 @@ class ConversationState extends Model
     {
         return [
             'retention_until' => 'datetime',
+            'pending_action' => 'array',
+            'budget_min' => 'decimal:2',
+            'budget_max' => 'decimal:2',
         ];
     }
 

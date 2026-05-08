@@ -314,6 +314,10 @@ class TenantBusinessDataController extends Controller
             throw new HttpException(403, 'Forbidden tenant scope.');
         }
 
+        if (array_key_exists('sort_order', $payload) && $payload['sort_order'] === null) {
+            $payload['sort_order'] = 0;
+        }
+
         PackageItem::query()->create(array_merge($payload, [
             'tenant_id' => $tenantId,
             'is_active' => true,
@@ -334,6 +338,10 @@ class TenantBusinessDataController extends Controller
             'description' => ['nullable', 'string'],
             'sort_order' => ['nullable', 'integer', 'min:0'],
         ]);
+
+        if (array_key_exists('sort_order', $payload) && $payload['sort_order'] === null) {
+            $payload['sort_order'] = 0;
+        }
 
         $packageItem->update($payload);
 

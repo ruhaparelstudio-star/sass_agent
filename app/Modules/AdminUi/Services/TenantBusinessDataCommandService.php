@@ -18,6 +18,7 @@ class TenantBusinessDataCommandService
 
     public function createServiceCatalog(int $tenantId, array $payload): ServiceCatalog
     {
+        $payload = $this->normalizePayload($payload);
         $payload['code'] = $payload['code'] ?? $this->generateServiceCatalogCode($tenantId);
 
         return ServiceCatalog::query()->create(array_merge($payload, ['tenant_id' => $tenantId]));
@@ -26,7 +27,7 @@ class TenantBusinessDataCommandService
     public function updateServiceCatalog(int $tenantId, ServiceCatalog $serviceCatalog, array $payload): void
     {
         $this->assertTenantRecord($tenantId, (int) $serviceCatalog->tenant_id);
-        $serviceCatalog->update($payload);
+        $serviceCatalog->update($this->normalizePayload($payload));
     }
 
     public function toggleServiceCatalog(int $tenantId, ServiceCatalog $serviceCatalog): void
@@ -37,6 +38,7 @@ class TenantBusinessDataCommandService
 
     public function createProduct(int $tenantId, array $payload): Product
     {
+        $payload = $this->normalizePayload($payload);
         $catalog = ServiceCatalog::query()->findOrFail($payload['service_catalog_id']);
         $this->assertTenantRecord($tenantId, (int) $catalog->tenant_id);
         $payload['code'] = $payload['code'] ?? $this->generateCodeByPrefix(Product::class, $tenantId, 'PRD-');
@@ -47,6 +49,7 @@ class TenantBusinessDataCommandService
     public function updateProduct(int $tenantId, Product $product, array $payload): void
     {
         $this->assertTenantRecord($tenantId, (int) $product->tenant_id);
+        $payload = $this->normalizePayload($payload);
         $catalog = ServiceCatalog::query()->findOrFail($payload['service_catalog_id']);
         $this->assertTenantRecord($tenantId, (int) $catalog->tenant_id);
         $product->update($payload);
@@ -60,6 +63,7 @@ class TenantBusinessDataCommandService
 
     public function createPackage(int $tenantId, array $payload): Package
     {
+        $payload = $this->normalizePayload($payload);
         $product = Product::query()->findOrFail($payload['product_id']);
         $this->assertTenantRecord($tenantId, (int) $product->tenant_id);
         $payload['code'] = $payload['code'] ?? $this->generateCodeByPrefix(Package::class, $tenantId, 'PKG-');
@@ -70,6 +74,7 @@ class TenantBusinessDataCommandService
     public function updatePackage(int $tenantId, Package $package, array $payload): void
     {
         $this->assertTenantRecord($tenantId, (int) $package->tenant_id);
+        $payload = $this->normalizePayload($payload);
         $product = Product::query()->findOrFail($payload['product_id']);
         $this->assertTenantRecord($tenantId, (int) $product->tenant_id);
         $package->update($payload);
@@ -83,6 +88,7 @@ class TenantBusinessDataCommandService
 
     public function createPrice(int $tenantId, array $payload): Price
     {
+        $payload = $this->normalizePayload($payload);
         $package = Package::query()->findOrFail($payload['package_id']);
         $this->assertTenantRecord($tenantId, (int) $package->tenant_id);
 
@@ -92,6 +98,7 @@ class TenantBusinessDataCommandService
     public function updatePrice(int $tenantId, Price $price, array $payload): void
     {
         $this->assertTenantRecord($tenantId, (int) $price->tenant_id);
+        $payload = $this->normalizePayload($payload);
         $package = Package::query()->findOrFail($payload['package_id']);
         $this->assertTenantRecord($tenantId, (int) $package->tenant_id);
         $price->update($payload);
@@ -105,6 +112,7 @@ class TenantBusinessDataCommandService
 
     public function createDiscount(int $tenantId, array $payload): Discount
     {
+        $payload = $this->normalizePayload($payload);
         $package = Package::query()->findOrFail($payload['package_id']);
         $this->assertTenantRecord($tenantId, (int) $package->tenant_id);
 
@@ -114,6 +122,7 @@ class TenantBusinessDataCommandService
     public function updateDiscount(int $tenantId, Discount $discount, array $payload): void
     {
         $this->assertTenantRecord($tenantId, (int) $discount->tenant_id);
+        $payload = $this->normalizePayload($payload);
         $package = Package::query()->findOrFail($payload['package_id']);
         $this->assertTenantRecord($tenantId, (int) $package->tenant_id);
         $discount->update($payload);
@@ -127,13 +136,13 @@ class TenantBusinessDataCommandService
 
     public function createFaq(int $tenantId, array $payload): Faq
     {
-        return Faq::query()->create(array_merge($payload, ['tenant_id' => $tenantId]));
+        return Faq::query()->create(array_merge($this->normalizePayload($payload), ['tenant_id' => $tenantId]));
     }
 
     public function updateFaq(int $tenantId, Faq $faq, array $payload): void
     {
         $this->assertTenantRecord($tenantId, (int) $faq->tenant_id);
-        $faq->update($payload);
+        $faq->update($this->normalizePayload($payload));
     }
 
     public function toggleFaq(int $tenantId, Faq $faq): void
@@ -231,6 +240,18 @@ class TenantBusinessDataCommandService
         if ($expectedTenantId !== $recordTenantId) {
             throw new HttpException(403, 'Forbidden tenant scope.');
         }
+    }
+
+    /**
+     * Coerce nullable numeric fields with NOT NULL DB defaults so an empty form
+     * submission falls back to 0 instead of triggering a constraint violation.
+     */
+    private function normalizePayload(array $payload): array
+    {
+        if (array_key_exists('sort_order', $payload) && $payload['sort_order'] === null) {
+            $payload['sort_order'] = 0;
+        }
+        return $payload;
     }
 
     private function generateServiceCatalogCode(int $tenantId): string

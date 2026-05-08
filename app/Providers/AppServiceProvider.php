@@ -8,6 +8,7 @@ use App\Modules\AiLayer\Services\DeterministicIntentClassifier;
 use App\Modules\AiLayer\Services\OpenAiLlmClient;
 use App\Modules\Calendar\Contracts\CalendarAvailabilityProvider;
 use App\Modules\Calendar\Services\GoogleCalendarProvider;
+use App\Modules\CoreEngine\Services\ResponseComposerService;
 use App\Modules\Validation\Contracts\ActionPermissionValidator;
 use App\Modules\Validation\Contracts\GroundingValidator;
 use App\Modules\Validation\Contracts\ModeValidator;
@@ -42,6 +43,7 @@ class AppServiceProvider extends ServiceProvider
             };
         });
         $this->app->bind(WaGatewayClient::class, HttpWaGatewayClient::class);
+        $this->app->singleton(ResponseComposerService::class);
     }
 
     /**

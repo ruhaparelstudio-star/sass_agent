@@ -148,6 +148,91 @@ class CalendarAvailabilityServiceTest extends TestCase
         ]);
     }
 
+    public function test_successful_result_is_cached_for_60s_provider_called_only_once(): void
+    {
+        $tenant = $this->createTenant('tenant-cache');
+
+        $tenant->calendarConnections()->create([
+            'provider' => 'fake',
+            'status' => 'connected',
+            'is_enabled' => true,
+            'config' => ['mode' => 'on'],
+        ]);
+        $tenant->calendarSettings()->create([
+            'timezone' => 'Asia/Jakarta',
+            'slot_minutes' => 60,
+            'is_active' => true,
+        ]);
+
+        $callCount = 0;
+        $this->app->bind(CalendarAvailabilityProvider::class, function () use (&$callCount) {
+            return new class($callCount) implements CalendarAvailabilityProvider {
+                public function __construct(public int &$count) {}
+                public function checkAvailability(int $tenantId, array $request): array
+                {
+                    $this->count++;
+                    return [
+                        'status' => 'available',
+                        'checked' => true,
+                        'available' => true,
+                        'reason' => null,
+                        'source' => 'fake_provider',
+                    ];
+                }
+            };
+        });
+
+        $service = app(CalendarAvailabilityService::class);
+
+        $r1 = $service->check($tenant, ['event_date_iso' => '2026-09-09']);
+        $r2 = $service->check($tenant, ['event_date_iso' => '2026-09-09']);
+
+        $this->assertTrue($r1['available']);
+        $this->assertTrue($r2['available']);
+        $this->assertSame(1, $callCount, 'provider should be invoked only once for cached success');
+
+        // Audit trail row created on every call (cache hit too).
+        $this->assertSame(2, \DB::table('calendar_availability_checks')
+            ->where('tenant_id', $tenant->id)
+            ->count());
+    }
+
+    public function test_provider_error_is_not_cached_and_retried_each_call(): void
+    {
+        $tenant = $this->createTenant('tenant-cache-err');
+
+        $tenant->calendarConnections()->create([
+            'provider' => 'fake',
+            'status' => 'connected',
+            'is_enabled' => true,
+            'config' => ['mode' => 'on'],
+        ]);
+        $tenant->calendarSettings()->create([
+            'timezone' => 'Asia/Jakarta',
+            'slot_minutes' => 60,
+            'is_active' => true,
+        ]);
+
+        $callCount = 0;
+        $this->app->bind(CalendarAvailabilityProvider::class, function () use (&$callCount) {
+            return new class($callCount) implements CalendarAvailabilityProvider {
+                public function __construct(public int &$count) {}
+                public function checkAvailability(int $tenantId, array $request): array
+                {
+                    $this->count++;
+                    throw new \RuntimeException('boom');
+                }
+            };
+        });
+
+        $service = app(CalendarAvailabilityService::class);
+
+        $service->check($tenant, ['event_date_iso' => '2026-10-10']);
+        $service->check($tenant, ['event_date_iso' => '2026-10-10']);
+
+        $this->assertSame(2, $callCount, 'provider error must not be cached');
+    }
+
     private function createTenant(string $slug): Tenant
     {
         return Tenant::query()->create([
