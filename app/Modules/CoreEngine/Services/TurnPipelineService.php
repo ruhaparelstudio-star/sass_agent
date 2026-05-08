@@ -633,7 +633,8 @@ class TurnPipelineService
         }
 
         return match ($intent) {
-            Intent::AskPricelist => $this->buildPricelistCandidate($leadProfile, $entities, $context),
+            Intent::AskPricelist,
+            Intent::AskPrice => $this->buildPricelistCandidate($leadProfile, $entities, $context),
             Intent::BookingIntent => $this->buildBookingCandidate($entities, $leadProfile, $context),
             default => [
                 'action' => 'reply_safe_text',
@@ -760,6 +761,15 @@ class TurnPipelineService
 
             if ($intent === Intent::ProvideName) {
                 return 'Makasih kak, namanya sudah saya catat. Siap kak, kakak lagi cari layanan untuk acara apa ya?';
+            }
+
+            if ($intent === Intent::ProvideEventType) {
+                $hasName = ($entities['customer_name'] ?? null) !== null;
+                if (! $hasName) {
+                    return 'Siap kak, sudah dicatat. Sebelum kita lanjut, boleh tahu nama kakak?';
+                }
+
+                return 'Siap kak, informasinya sudah dicatat. Boleh share tanggal acaranya kak?';
             }
 
             if ($intent === Intent::ProvidePreference) {
@@ -1251,6 +1261,7 @@ class TurnPipelineService
             if (is_array($calendarCheck)
                 && (($calendarCheck['checked'] ?? false) === true)
                 && (($calendarCheck['available'] ?? false) === false)
+                && ($calendarCheck['reason'] ?? null) !== 'calendar_provider_error'
             ) {
                 return [
                     'required' => true,

@@ -30,7 +30,7 @@ class WaInboundTurnOrchestratorService
     private const DEFAULT_TIMEZONE = 'Asia/Jakarta';
 
     private const INTERPRETATION_INSTRUCTION = <<<'TEXT'
-Return ONLY valid JSON object (no prose, no markdown, no code fence) with exact schema:
+You are an intent classifier for a wedding photography vendor chatbot. Return ONLY a valid JSON object (no prose, no markdown, no code fence) matching this exact schema:
 {
   "intent": "string",
   "confidence": 0.0,
@@ -38,6 +38,7 @@ Return ONLY valid JSON object (no prose, no markdown, no code fence) with exact 
     "package_query": null,
     "customer_name": null,
     "event_type": null,
+    "service_interest": null,
     "event_date": null,
     "location": null,
     "budget": null,
@@ -49,9 +50,40 @@ Return ONLY valid JSON object (no prose, no markdown, no code fence) with exact 
     "corrected_fields": []
   }
 }
-Allowed intent values:
-greeting, first_contact, intro_interest, ask_package, ask_package_detail, ask_price, ask_pricelist, ask_availability, provide_name, provide_date, provide_event_type, provide_budget, provide_preference, booking_intent, request_handoff, complaint, payment_related, topic_switch, correction, unclear_message, unknown
-If unsure set intent="unknown", confidence=0.0, keep entities null/empty.
+
+Intent rules (pick exactly one):
+- greeting: opening salutation only (hi, halo, selamat pagi, sore, etc.)
+- ask_price: asks general price/cost/budget without requesting the pricelist document (harga, biaya, berapa, kisaran)
+- ask_pricelist: explicitly requests the pricelist document/file/brosur (pricelist, price list, brosur, katalog pdf, kirim daftar harga)
+- ask_package_detail: asks for contents or inclusions of a specific package
+- ask_availability: asks whether a date/slot is available
+- provide_name: user states their own name
+- provide_date: user states an event date or preferred date
+- provide_event_type: user describes the type of event (wedding, prewedding, engagement, etc.) or event details (guest count, venue type, indoor/outdoor)
+- provide_budget: user states a budget amount or range
+- provide_preference: user states preferences not covered by other provide_* intents (style, theme, duration)
+- booking_intent: user wants to make a booking or reservation
+- request_handoff: user asks to speak to a human, admin, or CS
+- complaint: user expresses dissatisfaction
+- payment_related: user asks about or confirms payment, invoice, DP, or transfer
+- topic_switch: user changes subject to something unrelated
+- correction: user corrects or retracts a previously stated entity
+- unclear_message: message is too short, ambiguous, or uninterpretable
+- unknown: none of the above apply
+
+Entity rules:
+- customer_name: full name the user gives for themselves (not a venue/vendor name)
+- event_type: normalized event category, e.g. "wedding", "prewedding", "engagement"
+- service_interest: same as event_type when user expresses service interest (copy event_type value here)
+- event_date: date string as stated by user; keep original format (e.g. "5 juni 2026", "juni 2026", "bulan depan")
+- location: venue type or city if mentioned (e.g. "indoor", "outdoor", "Bandung")
+- budget / budget_min / budget_max: numeric amount in IDR (no currency symbol, no dots); null if not stated
+- package_query / package_interest: package name or tier mentioned by user
+- invoice_reference: invoice or booking code if mentioned
+- correction: true if user is correcting a previously stated entity
+- corrected_fields: array of entity keys being corrected (e.g. ["event_date", "customer_name"])
+
+If unsure: set intent="unknown", confidence=0.0, keep entities null/false/[].
 TEXT;
 
     /**
@@ -492,8 +524,10 @@ TEXT;
                 'message_hint' => mb_substr($userMessage, 0, 120),
                 'event_date_iso' => $state->event_date_iso,
             ]);
+            $isProviderError = ($calendarCheck['reason'] ?? null) === 'calendar_provider_error';
             $grounding['calendar'] = [
-                'is_grounded' => $calendarCheck['checked'] === true && $calendarCheck['available'] === true,
+                'is_grounded' => ($calendarCheck['checked'] === true && $calendarCheck['available'] === true)
+                    || $isProviderError,
                 'source' => $calendarCheck['source'],
                 'reason' => $calendarCheck['reason'],
             ];
