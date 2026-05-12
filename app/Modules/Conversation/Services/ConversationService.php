@@ -230,7 +230,13 @@ class ConversationService
             }
             if (array_key_exists('pending_action', $stateUpdate)) {
                 $pending = $stateUpdate['pending_action'];
-                $state->pending_action = is_array($pending) && $pending !== [] ? $pending : null;
+                if (is_array($pending) && $pending !== []) {
+                    $state->pending_action = $pending;
+                } elseif (is_string($pending) && trim($pending) !== '') {
+                    $state->pending_action = $pending;
+                } else {
+                    $state->pending_action = null;
+                }
             }
 
             $state->save();

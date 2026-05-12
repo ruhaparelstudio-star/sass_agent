@@ -179,7 +179,9 @@ TEXT;
             $executedSteps[] = 'interpret_and_extract_entities';
             $executedSteps[] = 'build_and_validate_decision';
             $this->conversationService->syncLeadFromEntities($conversation, $tenant, is_array($pipeline['entities'] ?? null) ? $pipeline['entities'] : []);
-            $this->persistDurableStateFromPipeline($tenant, $conversation, $state, $pipeline);
+            // State persistence is now handled inside TurnPipelineService::handle() via persistDurable.
+            // Refresh the local instance so any downstream reads see the freshly-persisted values.
+            $state->refresh();
 
             $executedSteps[] = 'compose_response';
             $replyText = $this->composeReplyText($pipeline);
@@ -321,107 +323,6 @@ TEXT;
     }
 
     /**
-     * @param  array<string,mixed>  $pipeline
-     */
-    private function persistDurableStateFromPipeline(
-        Tenant $tenant,
-        Conversation $conversation,
-        ConversationState $state,
-        array $pipeline
-    ): void {
-        $entities = is_array($pipeline['entities'] ?? null) ? $pipeline['entities'] : [];
-        $blockedAction = $pipeline['blocked_actions'][0]['action'] ?? null;
-        $blockedReason = $pipeline['blocked_actions'][0]['reason'] ?? null;
-        $allowedAction = $pipeline['allowed_actions'][0] ?? null;
-        $intent = strtolower(trim((string) ($pipeline['intent'] ?? 'unknown')));
-
-        $pendingAction = $state->pending_action;
-        if (is_string($blockedAction) && trim($blockedAction) !== '') {
-            $normalizedBlockedAction = trim($blockedAction);
-            if ($normalizedBlockedAction === 'send_file') {
-                $pendingAction = 'send_pricelist';
-            } else {
-                $pendingAction = $normalizedBlockedAction;
-            }
-        } elseif (is_string($allowedAction) && in_array($allowedAction, ['send_file', 'send_booking_link'], true)) {
-            $pendingAction = null;
-        }
-
-        $activeGoal = $state->active_goal;
-        if ($pendingAction === 'send_pricelist') {
-            if ($intent === 'ask_pricelist' && $blockedReason === 'missing_name') {
-                $activeGoal = 'collect_lead_info';
-            } elseif (($intent === 'provide_name' || $intent === 'provide_event_type') && $allowedAction !== 'send_file') {
-                $activeGoal = 'collect_lead_info';
-            } elseif ($allowedAction === 'send_file') {
-                $activeGoal = 'send_pricelist';
-            }
-        } elseif ($intent === 'booking_intent') {
-            $activeGoal = 'booking';
-        }
-
-        $currentStage = $state->current_stage;
-        if ($intent === 'ask_pricelist' && $blockedReason === 'missing_name') {
-            $currentStage = 'collecting_name';
-        } elseif (($intent === 'provide_name' || $blockedReason === 'missing_event_type') && $pendingAction === 'send_pricelist') {
-            $currentStage = 'collecting_service';
-        } elseif ($allowedAction === 'send_file') {
-            $currentStage = 'pricelist_sent';
-        } elseif ($intent === 'ask_package_detail') {
-            $currentStage = 'explaining_package';
-        } elseif ($intent === 'booking_intent' && $allowedAction === 'send_booking_link') {
-            $currentStage = 'booking_requested';
-        }
-
-        $customerName = $this->firstNonEmptyString([
-            $entities['customer_name'] ?? null,
-            $entities['name'] ?? null,
-            $state->customer_name,
-        ]);
-
-        $eventType = $this->firstNonEmptyString([
-            $entities['event_type'] ?? null,
-            $state->event_type,
-        ]);
-
-        $serviceInterest = $this->firstNonEmptyString([
-            $entities['service_interest'] ?? null,
-            $entities['event_type'] ?? null,
-            $state->service_interest,
-        ]);
-
-        $packageInterest = $this->firstNonEmptyString([
-            $entities['package_interest'] ?? null,
-            $entities['resolved_package_name'] ?? null,
-            $entities['package_query'] ?? null,
-            $state->package_interest,
-        ]);
-
-        $selectedPackage = $this->firstNonEmptyString([
-            $entities['resolved_package_name'] ?? null,
-            $entities['package_query'] ?? null,
-            $state->selected_package,
-        ]);
-
-        $eventDateIso = $this->firstNonEmptyString([
-            $entities['event_date_iso'] ?? null,
-            $state->event_date_iso,
-        ]);
-
-        $this->conversationService->upsertState($conversation, $tenant, [
-            'current_stage' => $currentStage,
-            'active_goal' => $activeGoal,
-            'customer_name' => $customerName,
-            'event_type' => $eventType,
-            'service_interest' => $serviceInterest,
-            'package_interest' => $packageInterest,
-            'selected_package' => $selectedPackage,
-            'event_date_iso' => $eventDateIso,
-            'pending_action' => $pendingAction,
-        ]);
-    }
-
-    /**
      * @return array<string,mixed>
      */
     private function buildPersistedEntityContext(ConversationState $state): array
@@ -432,6 +333,10 @@ TEXT;
         $packageInterest = $this->firstNonEmptyString([$state->package_interest]);
         $selectedPackage = $this->firstNonEmptyString([$state->selected_package]);
         $eventDateIso = $this->firstNonEmptyString([$state->event_date_iso]);
+        $eventDateRaw = $this->firstNonEmptyString([$state->event_date_raw]);
+        $location = $this->firstNonEmptyString([$state->location]);
+        $budgetMin = $state->budget_min !== null ? (float) $state->budget_min : null;
+        $budgetMax = $state->budget_max !== null ? (float) $state->budget_max : null;
 
         return [
             'customer_name' => $name,
@@ -443,6 +348,11 @@ TEXT;
             'resolved_package_name' => $selectedPackage,
             'selected_package' => $selectedPackage,
             'event_date_iso' => $eventDateIso,
+            'event_date_raw' => $eventDateRaw,
+            'location' => $location,
+            'budget_min' => $budgetMin,
+            'budget_max' => $budgetMax,
+            'pending_action' => $state->pending_action,
         ];
     }
 

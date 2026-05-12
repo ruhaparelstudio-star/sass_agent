@@ -213,7 +213,13 @@ class ConversationLogChatRegressionTest extends TestCase
         $t2Decision = (array) ($t2['inboundTurnTrace']?->decision_json ?? []);
         $t2Blocked  = (array) ($t2Decision['blocked_actions'] ?? []);
         $this->expectTrue($failures, ($t2Decision['intent'] ?? null) === 'ask_pricelist', 'Turn 2: intent must be ask_pricelist.');
-        $this->expectTrue($failures, ($t2['state']?->pending_action ?? null) === 'send_pricelist', 'Turn 2: pending_action must be send_pricelist.');
+        $this->expectTrue(
+            $failures,
+            is_array($t2['state']?->pending_action ?? null)
+                && (($t2['state']->pending_action['action'] ?? null) === 'send_file')
+                && (($t2['state']->pending_action['reason'] ?? null) === 'missing_name'),
+            'Turn 2: pending_action must be {action:send_file, reason:missing_name}.'
+        );
         $this->expectTrue($failures, ($t2['state']?->current_stage ?? null) === 'collecting_name', 'Turn 2: stage must be collecting_name.');
         $this->expectTrue(
             $failures,
@@ -549,7 +555,13 @@ class ConversationLogChatRegressionTest extends TestCase
         $failures = [];
 
         // Turn 1: pricelist blocked missing_name
-        $this->expectTrue($failures, ($stateByTurn[1]?->pending_action ?? null) === 'send_pricelist', 'Turn 1: pending_action must be send_pricelist.');
+        $this->expectTrue(
+            $failures,
+            is_array($stateByTurn[1]?->pending_action ?? null)
+                && (($stateByTurn[1]->pending_action['action'] ?? null) === 'send_file')
+                && (($stateByTurn[1]->pending_action['reason'] ?? null) === 'missing_name'),
+            'Turn 1: pending_action must be {action:send_file, reason:missing_name}.'
+        );
         $this->expectTrue($failures, ($stateByTurn[1]?->current_stage ?? null) === 'collecting_name', 'Turn 1: stage must be collecting_name.');
 
         // Turn 2: name collected, blocked missing_event_type

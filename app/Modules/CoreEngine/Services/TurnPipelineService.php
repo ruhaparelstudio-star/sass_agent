@@ -50,6 +50,11 @@ class TurnPipelineService
         array $context = []
     ): array {
         $state = $conversation->state()->firstOrFail();
+        // Capture pre-turn DB values; orchestrator-style state derivation downstream uses these
+        // as fallbacks regardless of in-memory mutations done by resolveGoal() during this turn.
+        $priorStage = $state->current_stage;
+        $priorGoal = $state->active_goal;
+        $priorPending = $state->pending_action;
         $dormantRetrieval = $this->resolveDormantRetrieval($tenant, $conversation, $context);
         $classificationInstruction = $this->buildClassificationInstruction($instruction, $state, $context);
 
@@ -195,17 +200,26 @@ class TurnPipelineService
             $tenant
         );
 
-        // Persist durable state in a single transaction at the end of the turn.
-        $pendingAction = $this->derivePendingAction($candidate, $result);
+        // Single source of truth for state writes: derive stage/goal/pending_action here
+        // (heuristics ported from WaInboundTurnOrchestratorService::persistDurableStateFromPipeline)
+        // and persist with merged entities in one transaction. Replaces the legacy dual-writer.
+        $pendingActionPayload = $this->derivePendingAction($candidate, $result);
+        $stateUpdate = $this->derivePipelineStateUpdate(
+            $finalIntent,
+            $allowedActions,
+            $blockedActions,
+            $priorStage,
+            $priorGoal,
+            $priorPending,
+            $pendingActionPayload,
+            $state->active_goal
+        );
+        $entitiesForPersist = $this->enrichEntitiesForPersistence($entities);
         $this->conversationService->persistDurable(
             $conversation,
             $tenant,
-            $entities,
-            [
-                'current_stage' => $state->current_stage,
-                'active_goal' => $state->active_goal,
-                'pending_action' => $pendingAction,
-            ]
+            $entitiesForPersist,
+            $stateUpdate
         );
 
         $response = [
@@ -1014,6 +1028,170 @@ class TurnPipelineService
      * Build pending_action payload {action, reason, captured_at} for resume.
      * Returns null if no resume-worthy blocked candidate is present.
      */
+    /**
+     * Apply cross-field fallbacks for durable persistence. Mirrors the firstNonEmptyString chains
+     * the legacy orchestrator writer used so absent service_interest/package_interest/selected_package
+     * still get derived from the closest available signal in $entities.
+     *
+     * @param  array<string,mixed>  $entities
+     * @return array<string,mixed>
+     */
+    private function enrichEntitiesForPersistence(array $entities): array
+    {
+        $enriched = $entities;
+
+        // service_interest falls back to event_type when LLM only extracts the latter.
+        if (! $this->isPersistableEntity($enriched['service_interest'] ?? null)) {
+            if ($this->isPersistableEntity($enriched['event_type'] ?? null)) {
+                $enriched['service_interest'] = $enriched['event_type'];
+            }
+        }
+
+        // package_interest can be derived from resolved_package_name or package_query.
+        if (! $this->isPersistableEntity($enriched['package_interest'] ?? null)) {
+            if ($this->isPersistableEntity($enriched['resolved_package_name'] ?? null)) {
+                $enriched['package_interest'] = $enriched['resolved_package_name'];
+            } elseif ($this->isPersistableEntity($enriched['package_query'] ?? null)) {
+                $enriched['package_interest'] = $enriched['package_query'];
+            }
+        }
+
+        // selected_package mirrors resolved_package_name, falling back to package_query.
+        if (! $this->isPersistableEntity($enriched['selected_package'] ?? null)) {
+            if ($this->isPersistableEntity($enriched['resolved_package_name'] ?? null)) {
+                $enriched['selected_package'] = $enriched['resolved_package_name'];
+            } elseif ($this->isPersistableEntity($enriched['package_query'] ?? null)) {
+                $enriched['selected_package'] = $enriched['package_query'];
+            }
+        }
+
+        // customer_name can come in as 'name' from interpretation; map both.
+        if (! $this->isPersistableEntity($enriched['customer_name'] ?? null)) {
+            if ($this->isPersistableEntity($enriched['name'] ?? null)) {
+                $enriched['customer_name'] = $enriched['name'];
+            }
+        }
+
+        return $enriched;
+    }
+
+    private function isPersistableEntity(mixed $value): bool
+    {
+        if ($value === null) {
+            return false;
+        }
+        if (is_string($value)) {
+            return trim($value) !== '';
+        }
+        if (is_array($value)) {
+            return $value !== [];
+        }
+        return true;
+    }
+
+    /**
+     * Derive durable state update (current_stage, active_goal, pending_action) at end of turn.
+     * Stage/goal heuristics ported from WaInboundTurnOrchestratorService::persistDurableStateFromPipeline.
+     * pending_action is persisted as the structured payload returned by derivePendingAction
+     * (e.g. {action, reason, captured_at}), while a local string flag mirrors the legacy
+     * 'send_pricelist' marker used for stage/goal branching.
+     *
+     * @param  list<string>                                              $allowedActions
+     * @param  list<array{action:string,reason:string}>                  $blockedActions
+     * @param  array{action:string,reason:string,captured_at:string}|null $pendingActionPayload
+     * @param  ?string  $pipelineGoal  Pipeline-resolved semantic goal used as fallback when no
+     *                                 orchestrator-style override applies (e.g. fresh conversation).
+     * @return array{current_stage:?string, active_goal:?string, pending_action:?array<string,mixed>}
+     */
+    private function derivePipelineStateUpdate(
+        Intent $finalIntent,
+        array $allowedActions,
+        array $blockedActions,
+        ?string $priorStage,
+        ?string $priorGoal,
+        mixed $priorPending,
+        ?array $pendingActionPayload,
+        ?string $pipelineGoal
+    ): array {
+        $intent = strtolower(trim($finalIntent->value));
+        $blockedAction = $blockedActions[0]['action'] ?? null;
+        $blockedReason = $blockedActions[0]['reason'] ?? null;
+        $allowedAction = $allowedActions[0] ?? null;
+
+        // Legacy string flag — drives stage/goal branching only, not persisted.
+        $priorPendingFlag = is_array($priorPending)
+            ? (is_string($priorPending['action'] ?? null) ? $this->mapActionToPendingFlag((string) $priorPending['action']) : null)
+            : (is_string($priorPending) ? $priorPending : null);
+        $pendingFlag = $priorPendingFlag;
+        if (is_string($blockedAction) && trim($blockedAction) !== '') {
+            $pendingFlag = $this->mapActionToPendingFlag(trim($blockedAction));
+        } elseif (is_string($allowedAction) && in_array($allowedAction, ['send_file', 'send_booking_link'], true)) {
+            $pendingFlag = null;
+        }
+
+        // Goal precedence: orchestrator-style overrides (collect_lead_info, send_pricelist, booking)
+        // win for the specific flows they cover. Otherwise fall back to the pipeline-resolved goal
+        // (qualification, pricing, opening, ...) so fresh conversations don't end up with null goals.
+        $activeGoal = $priorGoal;
+        $orchestratorOverride = false;
+        if ($pendingFlag === 'send_pricelist') {
+            if ($intent === 'ask_pricelist' && $blockedReason === 'missing_name') {
+                $activeGoal = 'collect_lead_info';
+                $orchestratorOverride = true;
+            } elseif (($intent === 'provide_name' || $intent === 'provide_event_type') && $allowedAction !== 'send_file') {
+                $activeGoal = 'collect_lead_info';
+                $orchestratorOverride = true;
+            } elseif ($allowedAction === 'send_file') {
+                $activeGoal = 'send_pricelist';
+                $orchestratorOverride = true;
+            }
+        } elseif ($intent === 'booking_intent') {
+            $activeGoal = 'booking';
+            $orchestratorOverride = true;
+        }
+        if (! $orchestratorOverride && is_string($pipelineGoal) && $pipelineGoal !== '') {
+            $activeGoal = $pipelineGoal;
+        }
+
+        $currentStage = $priorStage;
+        if ($intent === 'ask_pricelist' && $blockedReason === 'missing_name') {
+            $currentStage = 'collecting_name';
+        } elseif (($intent === 'provide_name' || $blockedReason === 'missing_event_type') && $pendingFlag === 'send_pricelist') {
+            $currentStage = 'collecting_service';
+        } elseif ($allowedAction === 'send_file') {
+            $currentStage = 'pricelist_sent';
+        } elseif ($intent === 'ask_package_detail') {
+            $currentStage = 'explaining_package';
+        } elseif ($intent === 'booking_intent' && $allowedAction === 'send_booking_link') {
+            $currentStage = 'booking_requested';
+        }
+
+        return [
+            'current_stage' => $currentStage,
+            'active_goal' => $activeGoal,
+            'pending_action' => $pendingActionPayload,
+        ];
+    }
+
+    /**
+     * Map a candidate action name to the legacy pending flag used for stage/goal derivation.
+     * Returns null for actions that should not stick as pending (e.g. plain reply_text).
+     */
+    private function mapActionToPendingFlag(string $action): ?string
+    {
+        return match ($action) {
+            'send_file', 'send_pricelist_file' => 'send_pricelist',
+            'send_booking_link' => 'send_booking_link',
+            default => null,
+        };
+    }
+
+    /**
+     * Build pending_action payload {action, reason, captured_at} for resume.
+     * Returns null if no resume-worthy blocked candidate is present.
+     *
+     * @return array{action:string,reason:string,captured_at:string}|null
+     */
     private function derivePendingAction(array $candidate, array $result): ?array
     {
         $blocked = $result['blocked'] ?? [];
@@ -1033,13 +1211,8 @@ class TurnPipelineService
         $reasons = is_array($first['reasons'] ?? null) ? $first['reasons'] : [];
         $reason = (string) ($reasons[0] ?? '');
 
-        // Only resume-worthy actions
         $resumeWorthy = ['send_file', 'send_pricelist_file', 'send_booking_link'];
-        if (! in_array($action, $resumeWorthy, true)) {
-            return null;
-        }
-
-        if ($reason === '') {
+        if (! in_array($action, $resumeWorthy, true) || $reason === '') {
             return null;
         }
 

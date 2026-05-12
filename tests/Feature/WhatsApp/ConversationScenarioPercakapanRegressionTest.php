@@ -227,7 +227,13 @@ class ConversationScenarioPercakapanRegressionTest extends TestCase
             ($turn2['state']?->active_goal ?? null) === 'send_pricelist' || ($turn2['state']?->active_goal ?? null) === 'collect_lead_info',
             'Turn 2: active_goal should be send_pricelist/collect_lead_info.'
         );
-        $this->expectTrue($failures, ($turn2['state']?->pending_action ?? null) === 'send_pricelist', 'Turn 2: pending_action should be send_pricelist.');
+        $this->expectTrue(
+            $failures,
+            is_array($turn2['state']?->pending_action ?? null)
+                && (($turn2['state']->pending_action['action'] ?? null) === 'send_file')
+                && (($turn2['state']->pending_action['reason'] ?? null) === 'missing_name'),
+            'Turn 2: pending_action should be {action:send_file, reason:missing_name}.'
+        );
         $this->expectTrue(
             $failures,
             isset($turn2Blocked[0]['action'], $turn2Blocked[0]['reason']) && $turn2Blocked[0]['action'] === 'send_file' && $turn2Blocked[0]['reason'] === 'missing_name',
